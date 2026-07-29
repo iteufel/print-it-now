@@ -286,6 +286,19 @@ Status EnumeratePrinters(std::vector<PrinterInfo>* out) {
   return Status::Ok();
 }
 
+void FillFromJobInfo2(const JOB_INFO_2W* job, const std::string& printer, JobInfo* out) {
+  out->job_id = static_cast<int>(job->JobId);
+  out->printer = job->pPrinterName != nullptr ? win::Narrow(job->pPrinterName) : printer;
+  out->job_name = job->pDocument != nullptr ? win::Narrow(job->pDocument) : "";
+  out->state = ToJobState(job->Status);
+  out->raw_state = DescribeJobStatus(job->Status);
+  if (job->TotalPages > 0) out->total_pages = static_cast<int>(job->TotalPages);
+  out->pages_printed = static_cast<int>(job->PagesPrinted);
+  out->size = static_cast<int64_t>(job->Size);
+  const int64_t submitted = ToUnixSeconds(job->Submitted);
+  if (submitted > 0) out->created_at = submitted;
+}
+
 Status ReadJobInfo(HANDLE handle,
                    const std::string& printer,
                    int job_id,
@@ -318,17 +331,7 @@ Status ReadJobInfo(HANDLE handle,
                         static_cast<int>(error), win::FormatLastError(error));
   }
 
-  const JOB_INFO_2W* job = reinterpret_cast<const JOB_INFO_2W*>(buffer.data());
-  out->job_id = static_cast<int>(job->JobId);
-  out->printer = job->pPrinterName != nullptr ? win::Narrow(job->pPrinterName) : printer;
-  out->job_name = job->pDocument != nullptr ? win::Narrow(job->pDocument) : "";
-  out->state = ToJobState(job->Status);
-  out->raw_state = DescribeJobStatus(job->Status);
-  if (job->TotalPages > 0) out->total_pages = static_cast<int>(job->TotalPages);
-  out->pages_printed = static_cast<int>(job->PagesPrinted);
-  out->size = static_cast<int64_t>(job->Size);
-  const int64_t submitted = ToUnixSeconds(job->Submitted);
-  if (submitted > 0) out->created_at = submitted;
+  FillFromJobInfo2(reinterpret_cast<const JOB_INFO_2W*>(buffer.data()), printer, out);
   *found = true;
   return Status::Ok();
 }
@@ -514,6 +517,48 @@ Status QueryJob(const std::string& printer, int job_id, JobInfo* out, bool* foun
   win::PrinterHandle handle;
   PIN_RETURN_IF_ERROR(handle.Open(win::Widen(printer)));
   return ReadJobInfo(handle.get(), printer, job_id, out, found);
+}
+
+Status ListJobs(const std::string& printer, std::vector<JobInfo>* out) {
+  out->clear();
+  win::PrinterHandle handle;
+  PIN_RETURN_IF_ERROR(handle.Open(win::Widen(printer)));
+
+  DWORD needed = 0;
+  DWORD returned = 0;
+  ::EnumJobsW(handle.get(), 0, 0xFFFFFFFF, 2, nullptr, 0, &needed, &returned);
+  if (needed == 0) {
+    const DWORD error = GetLastError();
+    // ERROR_INSUFFICIENT_BUFFER with needed==0 means an empty queue on some
+    // drivers; ERROR_INVALID_PARAMETER can also mean no jobs.
+    if (error == ERROR_INSUFFICIENT_BUFFER || error == ERROR_SUCCESS ||
+        error == ERROR_INVALID_PARAMETER) {
+      return Status::Ok();
+    }
+    return Status::Error(code::kBackend,
+                        "Could not list jobs for printer \"" + printer + "\": " +
+                            win::FormatLastError(error),
+                        static_cast<int>(error), win::FormatLastError(error));
+  }
+
+  std::vector<unsigned char> buffer(needed);
+  if (::EnumJobsW(handle.get(), 0, 0xFFFFFFFF, 2, buffer.data(), needed, &needed, &returned) ==
+      0) {
+    const DWORD error = GetLastError();
+    return Status::Error(code::kBackend,
+                        "Could not list jobs for printer \"" + printer + "\": " +
+                            win::FormatLastError(error),
+                        static_cast<int>(error), win::FormatLastError(error));
+  }
+
+  const JOB_INFO_2W* jobs = reinterpret_cast<const JOB_INFO_2W*>(buffer.data());
+  out->reserve(returned);
+  for (DWORD i = 0; i < returned; ++i) {
+    JobInfo info;
+    FillFromJobInfo2(&jobs[i], printer, &info);
+    out->push_back(std::move(info));
+  }
+  return Status::Ok();
 }
 
 Status CancelJob(const std::string& printer, int job_id) {

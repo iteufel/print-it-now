@@ -13,6 +13,7 @@ import {
   getBackendInfo,
   getJob,
   knownPaperSizeNames,
+  listJobs,
   listPrinters,
   parsePageRanges,
   printPdf,
@@ -25,6 +26,7 @@ describe("public surface", () => {
       printPdf,
       listPrinters,
       getJob,
+      listJobs,
       cancelJob,
       getBackendInfo,
       parsePageRanges,
@@ -108,9 +110,10 @@ describe("printPdf input validation", () => {
   });
 });
 
-describe("getJob and cancelJob validation", () => {
+describe("getJob, listJobs and cancelJob validation", () => {
   it("rejects an empty printer name", async () => {
     await assert.rejects(getJob("", 1), { code: "EINVALIDOPTION", option: "printer" });
+    await assert.rejects(listJobs(""), { code: "EINVALIDOPTION", option: "printer" });
     await assert.rejects(cancelJob("  ", 1), { code: "EINVALIDOPTION", option: "printer" });
   });
 

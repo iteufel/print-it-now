@@ -184,6 +184,11 @@ so `"US Letter"`, `"us-letter"` and `"usletter"` are the same size.
 `null` means the job has left the queue, which is what completion looks like on
 both platforms — not that it never existed.
 
+### `listJobs(printer): Promise<JobStatus[]>`
+
+Jobs currently in the printer's queue. Finished jobs leave the queue, so the
+array is empty once everything has completed (or been cancelled).
+
 ### `cancelJob(printer, jobId): Promise<void>`
 
 ### `getBackendInfo(): Promise<BackendInfo>`

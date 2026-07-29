@@ -161,6 +161,44 @@ Status StreamFile(const cups::Library& cups, const std::string& path) {
   return status;
 }
 
+void FillJobInfo(const cups::Job& job, const std::string& fallback_printer, JobInfo* out) {
+  out->job_id = job.id;
+  out->printer = job.dest != nullptr ? job.dest : fallback_printer;
+  out->job_name = job.title != nullptr ? job.title : "";
+  out->state = ToJobState(job.state);
+  out->raw_state = std::to_string(job.state);
+  // cups_job_t reports kilobytes.
+  out->size = static_cast<int64_t>(job.size) * 1024;
+  if (job.creation_time > 0) out->created_at = static_cast<int64_t>(job.creation_time);
+}
+
+Status FetchJobs(const std::string& printer, std::vector<JobInfo>* out) {
+  out->clear();
+  Status status;
+  const cups::Library* cups = cups::Load(&status);
+  if (cups == nullptr) return status;
+
+  std::string name;
+  std::string instance;
+  SplitDestination(printer, &name, &instance);
+
+  cups::Job* jobs = nullptr;
+  const int count = cups->GetJobs2(nullptr, &jobs, name.c_str(), 0, cups::kWhichJobsAll);
+  if (count < 0) {
+    return cups::LastErrorStatus(*cups, "Failed to list jobs for printer \"" + printer + "\"");
+  }
+
+  out->reserve(static_cast<size_t>(count));
+  for (int i = 0; i < count; ++i) {
+    JobInfo info;
+    FillJobInfo(jobs[i], printer, &info);
+    out->push_back(std::move(info));
+  }
+
+  cups->FreeJobs(count, jobs);
+  return Status::Ok();
+}
+
 }  // namespace
 
 Status Describe(BackendInfo* out) {
@@ -295,37 +333,19 @@ Status Print(const PrintRequest& request, PrintResult* out) {
 
 Status QueryJob(const std::string& printer, int job_id, JobInfo* out, bool* found) {
   *found = false;
-  Status status;
-  const cups::Library* cups = cups::Load(&status);
-  if (cups == nullptr) return status;
-
-  std::string name;
-  std::string instance;
-  SplitDestination(printer, &name, &instance);
-
-  cups::Job* jobs = nullptr;
-  const int count = cups->GetJobs2(nullptr, &jobs, name.c_str(), 0, cups::kWhichJobsAll);
-  if (count < 0) {
-    return cups::LastErrorStatus(*cups, "Failed to list jobs for printer \"" + printer + "\"");
-  }
-
-  for (int i = 0; i < count; ++i) {
-    if (jobs[i].id != job_id) continue;
-    const cups::Job& job = jobs[i];
-    out->job_id = job.id;
-    out->printer = job.dest != nullptr ? job.dest : printer;
-    out->job_name = job.title != nullptr ? job.title : "";
-    out->state = ToJobState(job.state);
-    out->raw_state = std::to_string(job.state);
-    // cups_job_t reports kilobytes.
-    out->size = static_cast<int64_t>(job.size) * 1024;
-    if (job.creation_time > 0) out->created_at = static_cast<int64_t>(job.creation_time);
+  std::vector<JobInfo> jobs;
+  PIN_RETURN_IF_ERROR(FetchJobs(printer, &jobs));
+  for (const JobInfo& job : jobs) {
+    if (job.job_id != job_id) continue;
+    *out = job;
     *found = true;
     break;
   }
-
-  cups->FreeJobs(count, jobs);
   return Status::Ok();
+}
+
+Status ListJobs(const std::string& printer, std::vector<JobInfo>* out) {
+  return FetchJobs(printer, out);
 }
 
 Status CancelJob(const std::string& printer, int job_id) {

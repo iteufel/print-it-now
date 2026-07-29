@@ -6,6 +6,7 @@ import {
   cancelJob,
   getBackendInfo,
   getJob,
+  listJobs,
   listPrinters,
   printPdf,
 } from "./index.js";
@@ -17,6 +18,7 @@ Usage:
   print-it-now <file.pdf> [options]     print a PDF (use - to read stdin)
   print-it-now printers                 list available printers
   print-it-now backend                  show which backend is in use
+  print-it-now jobs <printer>           list jobs in a printer's queue
   print-it-now job <printer> <id>       show the state of a job
   print-it-now cancel <printer> <id>    cancel a job
 
@@ -170,7 +172,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   if (Object.keys(windows).length > 0) options.windows = windows;
 
   const [first = "", ...rest] = positional;
-  const commands = new Set(["printers", "backend", "job", "cancel"]);
+  const commands = new Set(["printers", "backend", "jobs", "job", "cancel"]);
   return commands.has(first)
     ? { command: first, positional: rest, options, json }
     : { command: "print", positional, options, json };
@@ -216,6 +218,19 @@ async function main(): Promise<number> {
           info.cupsLibrary ? `via ${info.cupsLibrary}` : undefined,
         ].filter(Boolean);
         return `${info.backend}${details.length > 0 ? ` (${details.join(", ")})` : ""}\n`;
+      });
+      return 0;
+    }
+
+    case "jobs": {
+      const [printer] = positional;
+      if (printer === undefined) throw new UsageError("jobs needs a printer name");
+      const jobs = await listJobs(printer);
+      emit(json, jobs, () => {
+        if (jobs.length === 0) return `No jobs in the queue on "${printer}".\n`;
+        return (
+          jobs.map((job) => `${job.jobId}  ${job.jobName}: ${job.state}`).join("\n") + "\n"
+        );
       });
       return 0;
     }

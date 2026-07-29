@@ -256,6 +256,38 @@ export async function getJob(printer: string, jobId: number): Promise<JobStatus 
   };
 }
 
+/**
+ * Lists the jobs currently in a printer's queue.
+ *
+ * Finished jobs disappear from the queue on both platforms, so the array only
+ * contains jobs that are still pending, held, processing, or otherwise retained.
+ */
+export async function listJobs(printer: string): Promise<JobStatus[]> {
+  if (typeof printer !== "string" || printer.trim() === "") {
+    throw new InvalidOptionError("printer", "expected a printer name");
+  }
+
+  const backend = await getBackend();
+  if (!backend.native) {
+    throw new BackendUnavailableError(
+      "Job status is not available through the CUPS command line fallback, which reports it " +
+        "only as localised prose. Install the CUPS library (libcups2) to list jobs.",
+    );
+  }
+
+  let raw;
+  try {
+    raw = await backend.native.listJobs(printer);
+  } catch (error) {
+    throw fromNativeError(error, { printer });
+  }
+
+  return raw.map(({ createdAt, ...rest }) => ({
+    ...rest,
+    ...(createdAt !== undefined ? { createdAt: new Date(createdAt * 1000) } : {}),
+  }));
+}
+
 /** Cancels a queued or printing job. */
 export async function cancelJob(printer: string, jobId: number): Promise<void> {
   if (typeof printer !== "string" || printer.trim() === "") {

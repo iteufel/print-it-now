@@ -143,6 +143,8 @@ Status Print(const PrintRequest& request, PrintResult* out);
 // macro selecting between GetJobA and GetJobW, which would silently rename this
 // declaration on Windows and leave the call sites resolving to the wrong thing.
 Status QueryJob(const std::string& printer, int job_id, JobInfo* out, bool* found);
+// Leaves *out empty when the queue has no jobs, which is not an error.
+Status ListJobs(const std::string& printer, std::vector<JobInfo>* out);
 Status CancelJob(const std::string& printer, int job_id);
 
 }  // namespace backend
