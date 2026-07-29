@@ -23,7 +23,9 @@ jobs:
         include:
           - { target: win32-x64, os: windows-2022 }
           - { target: win32-arm64, os: windows-11-arm }
-          - { target: darwin-x64, os: macos-13 }
+          # GitHub's last x86_64 macOS image, retiring in August 2027. When it
+          # goes, darwin-x64 will need a cross-build from an arm64 runner.
+          - { target: darwin-x64, os: macos-15-intel }
           - { target: darwin-arm64, os: macos-15 }
           - { target: linux-x64, os: ubuntu-24.04 }
           - { target: linux-arm64, os: ubuntu-24.04-arm }

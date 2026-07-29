@@ -53,7 +53,10 @@ jobs:
           - { os: ubuntu-24.04, label: Linux x64, node: 22 }
           - { os: ubuntu-24.04-arm, label: Linux arm64, node: 22 }
           - { os: macos-15, label: macOS arm64, node: 22 }
-          - { os: macos-13, label: macOS x64, node: 22 }
+          # macos-15-intel is GitHub's last x86_64 macOS image; macos-13 was
+          # retired in December 2025. Intel coverage matters here because the
+          # package ships a darwin-x64 prebuild.
+          - { os: macos-15-intel, label: macOS x64, node: 22 }
           - { os: windows-2022, label: Windows x64, node: 22 }
     steps:
       - uses: actions/checkout@v4
