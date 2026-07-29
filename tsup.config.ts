@@ -4,6 +4,9 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     cli: "src/cli.ts",
+    // Built but deliberately absent from package.json's `exports`, so the test
+    // suite can reach the pure option-mapping code without it becoming API.
+    internal: "src/internal.ts",
   },
   format: ["esm", "cjs"],
   target: "node18",
