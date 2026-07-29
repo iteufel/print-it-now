@@ -11,7 +11,7 @@ import {
   listPrinters,
   printPdf,
 } from "../../dist/index.js";
-import { countPdfPages, makePdf } from "../helpers/pdf.mjs";
+import { countPdfPages, makePdf, mmToPoints, readMediaBox } from "../helpers/pdf.mjs";
 
 /**
  * Prints for real, through the platform's actual printing subsystem, and checks
@@ -258,9 +258,20 @@ describe("end-to-end printing", { skip }, () => {
       paperSize: "A5",
     });
     assert.ok(bytes);
-    const text = bytes.toString("latin1");
-    // A5 is 148 x 210mm, which is 420 x 595 PostScript points.
-    assert.match(text, /MediaBox\s*\[\s*0\s+0\s+42[01](\.\d+)?\s+59[45](\.\d+)?/);
+
+    const box = readMediaBox(bytes);
+    assert.ok(box, "the output should declare a media box");
+
+    // A5 is 148 x 210mm. Converting to points never lands on a round number, and
+    // drivers round differently, so allow a couple of points either way.
+    const expected = { widthPt: mmToPoints(148), heightPt: mmToPoints(210) };
+    const tolerance = 3;
+    assert.ok(
+      Math.abs(box.widthPt - expected.widthPt) <= tolerance &&
+        Math.abs(box.heightPt - expected.heightPt) <= tolerance,
+      `expected roughly ${expected.widthPt.toFixed(1)} x ${expected.heightPt.toFixed(1)}pt ` +
+        `(A5), got ${box.widthPt.toFixed(1)} x ${box.heightPt.toFixed(1)}pt`,
+    );
   });
 
   it("prints multiple copies", async () => {

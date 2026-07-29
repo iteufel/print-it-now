@@ -132,6 +132,10 @@ jobs:
         env:
           PRINT_IT_NOW_TEST_PRINTER: Microsoft Print to PDF
           PRINT_IT_NOW_TEST_RENDER_MODE: bitmap
+          # The Windows backend applies page selection and paper size itself, so
+          # those assertions are meaningful here and must not be skipped -- they
+          # are what proves the banded StretchDIBits path lands pages correctly.
+          PRINT_IT_NOW_TEST_RENDERS: "1"
         run: npm run test:e2e
 
   bun:

@@ -126,6 +126,34 @@ function countInText(text) {
   return (text.match(/\/Type\s*\/Page(?![a-zA-Z])/g) ?? []).length;
 }
 
+/**
+ * Reads the first page's media box, in PostScript points.
+ *
+ * Drivers write it in whatever form they like -- `[0 0 595 842]`,
+ * `[ 0.0 0.0 419.51999 595.32001 ]` -- and may bury it in a compressed object
+ * stream, so it is parsed numerically rather than matched as text. Comparing
+ * paper sizes then needs a tolerance, because converting millimetres to points
+ * never lands on a round number.
+ */
+export function readMediaBox(buffer) {
+  const candidates = [buffer.toString("latin1"), ...inflateObjectStreams(buffer)];
+  for (const text of candidates) {
+    const match = /\/MediaBox\s*\[\s*([\d.+-]+)\s+([\d.+-]+)\s+([\d.+-]+)\s+([\d.+-]+)\s*\]/.exec(
+      text,
+    );
+    if (!match) continue;
+    const [x0, y0, x1, y1] = match.slice(1).map(Number);
+    if ([x0, y0, x1, y1].some((value) => !Number.isFinite(value))) continue;
+    return { widthPt: Math.abs(x1 - x0), heightPt: Math.abs(y1 - y0) };
+  }
+  return undefined;
+}
+
+/** Converts millimetres to PostScript points, the unit a media box uses. */
+export function mmToPoints(millimetres) {
+  return (millimetres / 25.4) * 72;
+}
+
 function inflateObjectStreams(buffer) {
   const results = [];
   const text = buffer.toString("latin1");

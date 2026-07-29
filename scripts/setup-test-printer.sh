@@ -22,8 +22,17 @@ set -euo pipefail
 QUEUE="${1:-PrintItNowTest}"
 IPPEVE_PORT="${PRINT_IT_NOW_IPPEVE_PORT:-18631}"
 
-log() { printf '%s\n' "$*" >&2; }
-emit() { printf '%s\n' "$1"; }
+# Stdout is reserved for the environment lines, because the caller redirects it
+# straight into $GITHUB_ENV, where one stray line breaks the whole file. Rather
+# than remembering to redirect every command, the real stdout is moved to fd 3 and
+# fd 1 is pointed at stderr, so anything chatty is harmless by default. apt-get
+# and lpadmin both write to stdout despite -qq, which is what made a first attempt
+# at this fail.
+exec 3>&1
+exec 1>&2
+
+log() { printf '%s\n' "$*"; }
+emit() { printf '%s\n' "$1" >&3; }
 
 wait_for_cupsd() {
   for _ in $(seq 1 40); do
