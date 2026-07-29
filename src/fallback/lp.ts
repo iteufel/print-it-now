@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
-import { BackendError, BackendUnavailableError, PrinterNotFoundError } from "../errors.js";
+import {
+  BackendError,
+  BackendUnavailableError,
+  JobNotFoundError,
+  PrinterNotFoundError,
+} from "../errors.js";
 import type { Printer } from "../types.js";
 import type { NativeRequest } from "../options.js";
 
@@ -145,13 +150,36 @@ export async function print(
   };
 }
 
+/**
+ * Whether a `cancel` failure message means the job is no longer pending.
+ *
+ * CUPS does not distinguish "already finished" from "never existed", and reports
+ * an unknown queue the same way, because it resolves the job by number before it
+ * ever looks at the printer. The library backend turns the equivalent IPP
+ * statuses into JobNotFoundError; mapping the command line tool's prose onto the
+ * same error keeps the code a caller sees from depending on which backend happens
+ * to be active -- which is the entire point of having stable codes. Cancelling a
+ * job that has just finished is a race every caller hits eventually, so the two
+ * paths disagreeing about it is not a hypothetical.
+ *
+ * Exported for the unit tests: the prose is the contract with `cancel`, and the
+ * CI failure that motivated this mapping would not have been caught by any other
+ * check.
+ */
+export function isNotCancellableMessage(message: string): boolean {
+  return /already (?:completed|canceled|cancelled|aborted)|does not exist|not found/i.test(
+    message,
+  );
+}
+
 export async function cancelJob(printer: string, jobId: number): Promise<void> {
   // `cancel` has no `--` end-of-options marker, but CUPS forbids queue names from
   // starting with `-`, so the job id can never be mistaken for a flag.
   const result = await run("cancel", [`${printer}-${jobId}`]);
   if (result.code === 0) return;
-  throw new BackendError(
-    `cancel failed for job ${jobId} on "${printer}": ` +
-      (result.stderr.trim() || `exit code ${result.code}`),
-  );
+
+  const detail = result.stderr.trim() || result.stdout.trim() || `exit code ${result.code}`;
+  if (isNotCancellableMessage(detail)) throw new JobNotFoundError(printer, jobId);
+
+  throw new BackendError(`cancel failed for job ${jobId} on "${printer}": ${detail}`);
 }
