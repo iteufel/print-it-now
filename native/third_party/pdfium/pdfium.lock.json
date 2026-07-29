@@ -1,0 +1,27 @@
+{
+  "$comment": [
+    "Pinned PDFium release used by the Windows backend. Only Windows needs PDFium:",
+    "CUPS consumes PDF natively, so the macOS and Linux prebuilds ship nothing here.",
+    "",
+    "To move to a newer PDFium: bump `tag` and `version`, replace the sha256 values",
+    "with those of the new release's assets, and re-vendor include/fpdfview.h from",
+    "the same archive so the header and the DLL cannot drift apart."
+  ],
+  "repository": "bblanchon/pdfium-binaries",
+  "tag": "chromium/7961",
+  "version": "152.0.7961.0",
+  "archives": {
+    "win32-x64": {
+      "asset": "pdfium-win-x64.tgz",
+      "sha256": "88276459349b291c41f10422dad0210f007c04d919c8fa56472b6b7c6406adf4"
+    },
+    "win32-arm64": {
+      "asset": "pdfium-win-arm64.tgz",
+      "sha256": "9d8c50c65f129c3774b972cde09d3bea44478075f72faadfe9fc0c152e65d509"
+    },
+    "win32-ia32": {
+      "asset": "pdfium-win-x86.tgz",
+      "sha256": "7c90af84cbd56f452d00b716b271dbc165fca0c743954932eae411e51b4eef2e"
+    }
+  }
+}

@@ -1,0 +1,279 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # A slow or unlucky CI runner needs longer than a developer's machine before a
+  # queue produces its output file.
+  PRINT_IT_NOW_TEST_TIMEOUT_MS: "90000"
+
+jobs:
+  lint:
+    name: Typecheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm run build:ts
+
+  windows-sources:
+    name: Cross-compile Windows sources
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # The Windows backend is the more intricate one, and most contributors are
+      # not on Windows. Cross-compiling it here gives that feedback in a minute
+      # rather than waiting on a Windows runner.
+      - name: Install MinGW-w64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++-mingw-w64-x86-64
+      - run: npm run check:windows-sources
+
+  test:
+    name: Test on ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, label: Linux x64, node: 22 }
+          - { os: ubuntu-24.04-arm, label: Linux arm64, node: 22 }
+          - { os: macos-15, label: macOS arm64, node: 22 }
+          # macos-15-intel is GitHub's last x86_64 macOS image; macos-13 was
+          # retired in December 2025. Intel coverage matters here because the
+          # package ships a darwin-x64 prebuild.
+          - { os: macos-15-intel, label: macOS x64, node: 22 }
+          - { os: windows-2022, label: Windows x64, node: 22 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
+      # Must come after the build: `node-gyp rebuild` cleans build/, which would
+      # delete a DLL staged before it. The loader looks for pdfium.dll beside the
+      # addon, which for a source build means build/Release.
+      - name: Stage the pinned PDFium runtime
+        if: runner.os == 'Windows'
+        run: node scripts/fetch-pdfium.mjs --out build/Release
+
+      - name: Set up a print queue
+        if: runner.os != 'Windows'
+        run: bash scripts/setup-test-printer.sh PrintItNowTest >> "$GITHUB_ENV"
+
+      # Windows runners ship "Microsoft Print to PDF", which is a genuine printer
+      # driver going through the real spooler. Directing it at a file with
+      # windows.outputFile is what keeps it from waiting on a save dialog, so the
+      # end-to-end suite exercises the actual PDFium-to-GDI path headlessly.
+      - name: Select the Windows test printer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $printer = Get-Printer | Where-Object { $_.Name -eq 'Microsoft Print to PDF' }
+          if (-not $printer) {
+            throw 'Microsoft Print to PDF is not installed on this runner'
+          }
+          # The Windows backend does the page selection and rendering itself, so
+          # page ranges, subsets and paper size are all observable in the output.
+          # Copies are not: this driver reports it can produce them itself, so it
+          # is handed dmCopies and emits a single document.
+          "PRINT_IT_NOW_TEST_PRINTER=Microsoft Print to PDF" >> $env:GITHUB_ENV
+          "PRINT_IT_NOW_TEST_RENDERS=1" >> $env:GITHUB_ENV
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: End-to-end tests
+        run: npm run test:e2e
+
+      - name: Report the resolved backend
+        run: node dist/cli.js backend --json
+
+  oldest-node:
+    name: Prebuilt addon on Node 18
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Built with a current Node because node-gyp needs Node 20 or newer, then
+      # run on Node 18. That is exactly what a Node 18 user gets: they install a
+      # prebuilt N-API binary rather than compiling one, so this checks the thing
+      # that actually ships against the oldest runtime the package claims to
+      # support.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run prebuild
+      - run: npm run build:ts
+
+      - name: Remove the source build, leaving only the prebuilt binary
+        run: rm -rf build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Confirm the runtime really is Node 18
+        run: |
+          node --version
+          case "$(node --version)" in
+            v18.*) ;;
+            *) echo "::error::expected Node 18, got $(node --version)"; exit 1 ;;
+          esac
+
+      - run: bash scripts/setup-test-printer.sh PrintItNowTest >> "$GITHUB_ENV"
+      - run: npm run test:unit
+      - run: npm run test:e2e
+
+  test-windows-bitmap:
+    name: Test on Windows x64 (bitmap render mode)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      # After the build: `node-gyp rebuild` cleans build/.
+      - run: node scripts/fetch-pdfium.mjs --out build/Release
+
+      # The two Windows render paths fail in different ways, so both are worth
+      # covering: `vector` goes through PDFium's EMF print device, `bitmap`
+      # rasterises and blits with StretchDIBits, including the banding that keeps
+      # a high-resolution page from being allocated in one piece.
+      - name: End-to-end tests, bitmap render mode
+        shell: pwsh
+        env:
+          PRINT_IT_NOW_TEST_PRINTER: Microsoft Print to PDF
+          PRINT_IT_NOW_TEST_RENDER_MODE: bitmap
+          # The Windows backend applies page selection and paper size itself, so
+          # those assertions are meaningful here and must not be skipped -- they
+          # are what proves the banded StretchDIBits path lands pages correctly.
+          PRINT_IT_NOW_TEST_RENDERS: "1"
+        run: npm run test:e2e
+
+  bun:
+    name: Bun on ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, label: Linux x64 }
+          - { os: macos-15, label: macOS arm64 }
+          - { os: windows-2022, label: Windows x64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node is still needed to build: node-gyp targets the Node headers, and the
+      # resulting .node file is what Bun then loads through its own Node-API
+      # implementation.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: npm ci --ignore-scripts
+
+      - run: npm run build
+
+      # After the build: `node-gyp rebuild` cleans build/.
+      - name: Stage the pinned PDFium runtime
+        if: runner.os == 'Windows'
+        run: node scripts/fetch-pdfium.mjs --out build/Release
+
+      # Bun implements Node-API from scratch on JavaScriptCore, so an addon
+      # working under Node proves nothing about Bun. This checks addon loading,
+      # the promises AsyncWorker resolves, and error propagation.
+      - name: Bun smoke test
+        run: bun test/smoke/bun-smoke.mjs
+
+  fallback:
+    name: CUPS command line fallback
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: bash scripts/setup-test-printer.sh PrintItNowTest >> "$GITHUB_ENV"
+
+      # The fallback path only runs on machines without libcups, which no normal
+      # CI job resembles. Forcing it keeps it from rotting unnoticed.
+      - name: End-to-end tests through lp
+        env:
+          PRINT_IT_NOW_BACKEND: lp
+        run: npm run test:e2e
+
+  package:
+    name: Package contents
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build:ts
+
+      # Catches the classic native-package packaging mistake: shipping a tarball
+      # that has no binding.gyp or no native sources, so every install that has to
+      # build from source fails.
+      - name: Check the tarball has what a source build needs
+        run: |
+          npm pack --silent > /dev/null
+          tarball="$(ls print-it-now-*.tgz)"
+          contents="$(tar tzf "$tarball")"
+          printf '%s\n' "$contents"
+          for required in \
+            package/binding.gyp \
+            package/native/src/addon.cc \
+            package/native/src/posix/backend_cups.cc \
+            package/native/src/win/backend_win.cc \
+            package/native/third_party/pdfium/include/fpdfview.h \
+            package/native/third_party/pdfium/pdfium.lock.json \
+            package/scripts/fetch-pdfium.mjs \
+            package/dist/index.js \
+            package/dist/index.cjs \
+            package/dist/index.d.ts \
+            package/dist/cli.js
+          do
+            if ! printf '%s\n' "$contents" | grep -qxF "$required"; then
+              echo "::error::$required is missing from the published tarball"
+              exit 1
+            fi
+          done
+          echo "All required files are present."
