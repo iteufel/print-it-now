@@ -217,14 +217,24 @@ jobs:
           fi
           echo "Publishing ${tarballs[0]}"
           # Prefer Trusted Publishing (OIDC). If that is not configured yet, set
-          # the repository secret NPM_TOKEN to an npm automation token instead.
+          # the repository secret NPM_TOKEN to an npm *automation* token. Classic
+          # or granular publish tokens with 2FA fail here with EOTP -- CI has no
+          # one-time password.
+          set +e
           if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            npm publish "${tarballs[0]}" --access public --provenance
+            out=$(npm publish "${tarballs[0]}" --access public --provenance 2>&1)
+            status=$?
           else
-            # Empty _authToken from setup-node breaks OIDC; drop it so npm can
-            # exchange the Actions identity token with the registry.
             npm config delete "//registry.npmjs.org/:_authToken" || true
-            npm publish "${tarballs[0]}" --access public --provenance
+            out=$(npm publish "${tarballs[0]}" --access public --provenance 2>&1)
+            status=$?
+          fi
+          printf '%s\n' "$out"
+          if [ "$status" -ne 0 ]; then
+            if printf '%s\n' "$out" | grep -q 'EOTP'; then
+              echo "::error::NPM_TOKEN must be an npm Automation token (not a classic or granular publish token). Tokens that require 2FA OTP cannot publish from CI. Create one at https://www.npmjs.com/settings/~/tokens and update the NPM_TOKEN repository secret, or configure Trusted Publishing for workflow prebuild.yml instead."
+            fi
+            exit "$status"
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
