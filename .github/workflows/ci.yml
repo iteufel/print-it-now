@@ -67,14 +67,17 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Build
+        run: npm run build
+
+      # Must come after the build: `node-gyp rebuild` cleans build/, which would
+      # delete a DLL staged before it. The loader looks for pdfium.dll beside the
+      # addon, which for a source build means build/Release.
       - name: Stage the pinned PDFium runtime
         if: runner.os == 'Windows'
         run: node scripts/fetch-pdfium.mjs --out build/Release
 
-      - name: Build
-        run: npm run build
-
-      - name: Set up a file-backed print queue
+      - name: Set up a print queue
         if: runner.os != 'Windows'
         run: bash scripts/setup-test-printer.sh PrintItNowTest >> "$GITHUB_ENV"
 
@@ -116,8 +119,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: node scripts/fetch-pdfium.mjs --out build/Release
       - run: npm run build
+      # After the build: `node-gyp rebuild` cleans build/.
+      - run: node scripts/fetch-pdfium.mjs --out build/Release
 
       # The two Windows render paths fail in different ways, so both are worth
       # covering: `vector` goes through PDFium's EMF print device, `bitmap`
@@ -156,11 +160,12 @@ jobs:
 
       - run: npm ci --ignore-scripts
 
+      - run: npm run build
+
+      # After the build: `node-gyp rebuild` cleans build/.
       - name: Stage the pinned PDFium runtime
         if: runner.os == 'Windows'
         run: node scripts/fetch-pdfium.mjs --out build/Release
-
-      - run: npm run build
 
       # Bun implements Node-API from scratch on JavaScriptCore, so an addon
       # working under Node proves nothing about Bun. This checks addon loading,

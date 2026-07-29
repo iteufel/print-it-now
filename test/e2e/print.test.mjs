@@ -24,7 +24,15 @@ import { countPdfPages, makePdf } from "../helpers/pdf.mjs";
  *   PRINT_IT_NOW_TEST_OUTPUT_DIR   directory the queue writes into, one file per
  *                                  job named after the job title (Linux cups-pdf)
  *   PRINT_IT_NOW_TEST_OUTPUT_FILE  single fixed path the queue overwrites
- *                                  (a raw `file:` queue, as used on macOS)
+ *                                  (a raw `file:` queue)
+ *   PRINT_IT_NOW_TEST_NO_OUTPUT    set to 1 when a real queue exists but its
+ *                                  output cannot be inspected, as on macOS: it
+ *                                  removed raw queue support and has no cups-pdf,
+ *                                  so the queue is an ippeveprinter sink. The
+ *                                  submission, enumeration, status and error
+ *                                  paths still run against real CUPS there; the
+ *                                  identical backend has its output verified on
+ *                                  Linux.
  *   PRINT_IT_NOW_TEST_RENDERS      set to 1 when the pipeline applies page
  *                                  selection and paper size, so those are
  *                                  observable in the output
@@ -48,15 +56,25 @@ const rendersOptions = process.env["PRINT_IT_NOW_TEST_RENDERS"] === "1";
 const copiesMultiplyPages = process.env["PRINT_IT_NOW_TEST_COPIES"] === "1";
 const renderMode = process.env["PRINT_IT_NOW_TEST_RENDER_MODE"];
 
-const hasOutputTarget = isWindows || outputDir !== undefined || outputFile !== undefined;
-const skip =
-  printer !== undefined && hasOutputTarget
-    ? false
-    : "set PRINT_IT_NOW_TEST_PRINTER, plus PRINT_IT_NOW_TEST_OUTPUT_DIR or " +
-      "PRINT_IT_NOW_TEST_OUTPUT_FILE on POSIX. scripts/setup-test-printer.sh creates a " +
-      "suitable queue and prints the environment to use.";
+const noOutput = process.env["PRINT_IT_NOW_TEST_NO_OUTPUT"] === "1";
+const canInspectOutput =
+  !noOutput && (isWindows || outputDir !== undefined || outputFile !== undefined);
 
-const needsFilters = rendersOptions ? false : "the queue does not apply print options";
+const skip =
+  printer !== undefined && (canInspectOutput || noOutput)
+    ? false
+    : "set PRINT_IT_NOW_TEST_PRINTER, plus PRINT_IT_NOW_TEST_OUTPUT_DIR, " +
+      "PRINT_IT_NOW_TEST_OUTPUT_FILE or PRINT_IT_NOW_TEST_NO_OUTPUT on POSIX. " +
+      "scripts/setup-test-printer.sh creates a suitable queue and prints the " +
+      "environment to use.";
+
+// The option-dependent assertions all read the produced bytes, so they need both
+// a queue that applies options and one whose output can be seen.
+const needsFilters = !canInspectOutput
+  ? "this queue's output cannot be inspected"
+  : rendersOptions
+    ? false
+    : "this queue does not apply print options";
 
 // The CI matrix forces this path on one job so the fallback cannot rot unnoticed.
 // It drives lp/lpstat/cancel, which report less than the library does.
@@ -136,6 +154,8 @@ async function printAndCollect(source, options = {}) {
       windows: { ...windowsOverrides, ...options.windows, ...extra },
     });
 
+  if (!canInspectOutput) return { job: await submit(), bytes: undefined };
+
   if (isWindows) {
     const destination = join(workDir, `${jobName}.pdf`);
     const job = await submit({ outputFile: destination });
@@ -154,8 +174,12 @@ async function printAndCollect(source, options = {}) {
   const job = await submit();
   const bytes = await waitForStableFile(async () => {
     const now = await readdir(outputDir).catch(() => []);
-    const created = now.filter((name) => !before.has(name) && name.includes(jobName));
-    return created.length > 0 ? join(outputDir, created[0]) : undefined;
+    const created = now.filter((name) => !before.has(name));
+    if (created.length === 0) return undefined;
+    // Prefer a file the queue named after the job, but do not require it: only
+    // one job is in flight at a time, so any new file is this job's output.
+    const named = created.find((name) => name.includes(jobName));
+    return join(outputDir, named ?? created[0]);
   });
   return { job, bytes };
 }
@@ -184,16 +208,21 @@ describe("end-to-end printing", { skip }, () => {
     const { job, bytes } = await printAndCollect(makePdf({ pages: 3, label: "bytes" }));
     assert.ok(job.jobId > 0, "a job id should come back");
     assert.equal(job.printer, printer);
-    assert.ok(bytes, "the queue should have produced output");
-    assert.equal(countPdfPages(bytes), 3);
+    if (canInspectOutput) {
+      assert.ok(bytes, "the queue should have produced output");
+      assert.equal(countPdfPages(bytes), 3);
+    }
   });
 
   it("prints a PDF passed as a file path", async () => {
     const path = join(workDir, "from-disk.pdf");
     await writeFile(path, makePdf({ pages: 2, label: "from disk" }));
-    const { bytes } = await printAndCollect(path, { jobName: "e2e-from-disk" });
-    assert.ok(bytes, "the queue should have produced output");
-    assert.equal(countPdfPages(bytes), 2);
+    const { job, bytes } = await printAndCollect(path, { jobName: "e2e-from-disk" });
+    assert.ok(job.jobId > 0, "a job id should come back");
+    if (canInspectOutput) {
+      assert.ok(bytes, "the queue should have produced output");
+      assert.equal(countPdfPages(bytes), 2);
+    }
   });
 
   it("honours a page range", { skip: needsFilters }, async () => {
@@ -240,7 +269,7 @@ describe("end-to-end printing", { skip }, () => {
       copies: 2,
     });
     assert.ok(job.jobId > 0);
-    assert.ok(bytes, "the queue should have produced output");
+    if (canInspectOutput) assert.ok(bytes, "the queue should have produced output");
 
     // Whether copies show up as extra pages depends on the driver: one that can
     // produce copies itself is handed dmCopies and emits a single document, while

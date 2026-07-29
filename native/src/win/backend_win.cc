@@ -386,10 +386,14 @@ Status PrintPass(const pdfium::Library& pdfium,
 
 Status Describe(BackendInfo* out) {
   out->backend = "windows";
-  Status status;
-  const pdfium::Library* pdfium = pdfium::Load(&status);
-  if (pdfium == nullptr) return status;
-  out->pdfium_version = pdfium::Version();
+
+  // A missing PDFium is deliberately not an error here. Rendering needs it, but
+  // talking to the spooler does not, so enumerating printers and reading job
+  // status keep working -- which is exactly what someone diagnosing a broken
+  // install wants to be able to do. Print() reports the problem when it matters,
+  // and an empty pdfiumVersion is how a caller can tell.
+  Status ignored;
+  if (pdfium::Load(&ignored) != nullptr) out->pdfium_version = pdfium::Version();
   return Status::Ok();
 }
 
