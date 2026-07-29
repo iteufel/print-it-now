@@ -448,10 +448,12 @@ on the registry yet, publish once with an automation token (below), then switch
 to Trusted Publishing.
 
 **Automation token (fallback).** Create an npm
-[automation token](https://docs.npmjs.com/creating-and-viewing-access-tokens)
-with publish permission for the package (or for your user, for the first
-publish), then add it as the repository secret `NPM_TOKEN`. The publish job uses
-it when that secret is set.
+[**automation** token](https://docs.npmjs.com/creating-and-viewing-access-tokens)
+(type must be Automation — classic or granular publish tokens with 2FA fail in
+CI with `EOTP`, because there is no one-time password). Give it publish
+permission for the package (or for your user, for the first publish), then add
+it as the repository secret `NPM_TOKEN`. The publish job uses it when that
+secret is set.
 
 `workflow_dispatch` on the Prebuild workflow is a dry run: it builds and packs,
 but never publishes.
