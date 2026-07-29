@@ -86,6 +86,9 @@ jobs:
 
   # glibc and musl are not ABI compatible, so Alpine needs its own binaries.
   # prebuildify's --tag-libc names them so node-gyp-build picks the right one.
+  #
+  # Build inside Docker rather than a job-level `container:`: JavaScript actions
+  # (checkout, upload-artifact) are not supported in Alpine on arm64 runners.
   prebuild-musl:
     name: linux-${{ matrix.arch }}-musl
     runs-on: ${{ matrix.os }}
@@ -95,31 +98,28 @@ jobs:
         include:
           - { arch: x64, os: ubuntu-24.04 }
           - { arch: arm64, os: ubuntu-24.04-arm }
-    container:
-      image: node:22-alpine
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install a build toolchain
-        run: apk add --no-cache python3 make g++ bash
-
-      - run: npm ci --ignore-scripts
-
-      - name: Build the prebuilt addon
-        run: npm run prebuild
-
-      - run: ls -lR prebuilds
-
-      - name: Verify the prebuilt addon loads
+      - name: Build and verify the musl prebuild in Alpine
         run: |
-          rm -rf build
-          node -e "
-            const addon = require('node-gyp-build')(process.cwd());
-            if (typeof addon.print !== 'function') {
-              throw new Error('the prebuilt addon is missing exports');
-            }
-            console.log('the musl prebuild loads');
-          "
+          docker run --rm \
+            -v "$PWD":/src -w /src \
+            node:22-alpine \
+            sh -ec '
+              apk add --no-cache python3 make g++ bash
+              npm ci --ignore-scripts
+              npm run prebuild
+              ls -lR prebuilds
+              rm -rf build
+              node -e "
+                const addon = require(\"node-gyp-build\")(process.cwd());
+                if (typeof addon.print !== \"function\") {
+                  throw new Error(\"the prebuilt addon is missing exports\");
+                }
+                console.log(\"the musl prebuild loads\");
+              "
+            '
 
       - uses: actions/upload-artifact@v4
         with:
