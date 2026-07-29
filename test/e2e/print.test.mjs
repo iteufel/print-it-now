@@ -20,30 +20,56 @@ import { countPdfPages, makePdf } from "../helpers/pdf.mjs";
  * The test needs a queue that writes to a file. scripts/setup-test-printer.sh
  * creates one and prints the environment to use:
  *
- *   PRINT_IT_NOW_TEST_PRINTER    queue name
- *   PRINT_IT_NOW_TEST_OUTPUT_DIR directory the queue writes into (POSIX)
- *   PRINT_IT_NOW_TEST_RENDERS    set when the queue runs the real filter chain,
- *                                so page counts in the output reflect the
- *                                options that were sent
+ *   PRINT_IT_NOW_TEST_PRINTER      queue name
+ *   PRINT_IT_NOW_TEST_OUTPUT_DIR   directory the queue writes into, one file per
+ *                                  job named after the job title (Linux cups-pdf)
+ *   PRINT_IT_NOW_TEST_OUTPUT_FILE  single fixed path the queue overwrites
+ *                                  (a raw `file:` queue, as used on macOS)
+ *   PRINT_IT_NOW_TEST_RENDERS      set to 1 when the pipeline applies page
+ *                                  selection and paper size, so those are
+ *                                  observable in the output
+ *   PRINT_IT_NOW_TEST_COPIES       set to 1 when copies appear as extra pages in
+ *                                  the output. Driver-dependent: a driver that
+ *                                  produces copies itself may emit one document
+ *                                  instead
+ *   PRINT_IT_NOW_TEST_RENDER_MODE  vector | bitmap, to exercise both Windows
+ *                                  render paths
  *
- * On Windows no output directory is needed: the job names its own output file
- * through `windows.outputFile`, which is also what stops a file-backed driver
- * from raising a save dialog.
+ * On Windows no output location is needed from the environment: each job names
+ * its own file through `windows.outputFile`, which is also what stops a
+ * file-backed driver from waiting on a save dialog.
  */
 
 const isWindows = process.platform === "win32";
 const printer = process.env["PRINT_IT_NOW_TEST_PRINTER"];
 const outputDir = process.env["PRINT_IT_NOW_TEST_OUTPUT_DIR"];
+const outputFile = process.env["PRINT_IT_NOW_TEST_OUTPUT_FILE"];
 const rendersOptions = process.env["PRINT_IT_NOW_TEST_RENDERS"] === "1";
+const copiesMultiplyPages = process.env["PRINT_IT_NOW_TEST_COPIES"] === "1";
+const renderMode = process.env["PRINT_IT_NOW_TEST_RENDER_MODE"];
 
-const configured = printer !== undefined && (isWindows || outputDir !== undefined);
-const skip = configured
-  ? false
-  : "set PRINT_IT_NOW_TEST_PRINTER (and PRINT_IT_NOW_TEST_OUTPUT_DIR on POSIX); " +
-    "scripts/setup-test-printer.sh creates a suitable queue";
+const hasOutputTarget = isWindows || outputDir !== undefined || outputFile !== undefined;
+const skip =
+  printer !== undefined && hasOutputTarget
+    ? false
+    : "set PRINT_IT_NOW_TEST_PRINTER, plus PRINT_IT_NOW_TEST_OUTPUT_DIR or " +
+      "PRINT_IT_NOW_TEST_OUTPUT_FILE on POSIX. scripts/setup-test-printer.sh creates a " +
+      "suitable queue and prints the environment to use.";
+
+const needsFilters = rendersOptions ? false : "the queue does not apply print options";
+
+// The CI matrix forces this path on one job so the fallback cannot rot unnoticed.
+// It drives lp/lpstat/cancel, which report less than the library does.
+const isLpFallback = process.env["PRINT_IT_NOW_BACKEND"] === "lp";
+const needsJobStatus = isLpFallback
+  ? "the lp fallback cannot report job status"
+  : false;
 
 /** How long a queue gets to produce output before the test gives up. */
 const OUTPUT_TIMEOUT_MS = Number(process.env["PRINT_IT_NOW_TEST_TIMEOUT_MS"] ?? 45000);
+
+/** Windows render mode override, threaded into every job when set. */
+const windowsOverrides = renderMode === undefined ? {} : { renderMode };
 
 let workDir;
 
@@ -84,32 +110,48 @@ async function waitForStableFile(predicate) {
   return undefined;
 }
 
+async function fileIfPresent(path) {
+  try {
+    await readFile(path);
+    return path;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Submits a job and returns the bytes the queue produced.
  *
- * On Windows the destination is chosen up front; on POSIX the queue picks the
- * filename, so the directory is watched for a file whose name carries the job
- * title.
+ * Three collection strategies, because file-backed queues differ in who chooses
+ * the filename: on Windows the caller does, a cups-pdf queue names each file
+ * after the job title, and a raw `file:` queue overwrites one fixed path.
  */
 async function printAndCollect(source, options = {}) {
   const jobName = options.jobName ?? `e2e-${Math.random().toString(36).slice(2, 10)}`;
-
-  if (isWindows) {
-    const outputFile = join(workDir, `${jobName}.pdf`);
-    const job = await printPdf(source, {
+  const submit = (extra = {}) =>
+    printPdf(source, {
       ...options,
       jobName,
       printer,
-      windows: { ...options.windows, outputFile },
+      windows: { ...windowsOverrides, ...options.windows, ...extra },
     });
-    const bytes = await waitForStableFile(async () =>
-      (await readFile(outputFile).catch(() => undefined)) === undefined ? undefined : outputFile,
-    );
-    return { job, bytes };
+
+  if (isWindows) {
+    const destination = join(workDir, `${jobName}.pdf`);
+    const job = await submit({ outputFile: destination });
+    return { job, bytes: await waitForStableFile(() => fileIfPresent(destination)) };
+  }
+
+  if (outputFile !== undefined) {
+    // A raw queue reuses the same path, so the previous job's output has to go
+    // first or the wait would return it immediately.
+    await rm(outputFile, { force: true });
+    const job = await submit();
+    return { job, bytes: await waitForStableFile(() => fileIfPresent(outputFile)) };
   }
 
   const before = new Set(await readdir(outputDir).catch(() => []));
-  const job = await printPdf(source, { ...options, jobName, printer });
+  const job = await submit();
   const bytes = await waitForStableFile(async () => {
     const now = await readdir(outputDir).catch(() => []);
     const created = now.filter((name) => !before.has(name) && name.includes(jobName));
@@ -121,10 +163,11 @@ async function printAndCollect(source, options = {}) {
 describe("end-to-end printing", { skip }, () => {
   it("reports the backend that is doing the work", async () => {
     const info = await getBackendInfo();
-    assert.equal(info.backend, isWindows ? "windows" : "cups");
-    if (isWindows) {
+    const expected = isLpFallback ? "lp-fallback" : isWindows ? "windows" : "cups";
+    assert.equal(info.backend, expected);
+    if (expected === "windows") {
       assert.ok(info.pdfiumVersion, "the Windows backend should report its PDFium build");
-    } else {
+    } else if (expected === "cups") {
       assert.ok(info.cupsLibrary, "the CUPS backend should report the library it resolved");
     }
   });
@@ -153,7 +196,7 @@ describe("end-to-end printing", { skip }, () => {
     assert.equal(countPdfPages(bytes), 2);
   });
 
-  it("honours a page range", { skip: rendersOptions ? false : "queue does not run filters" }, async () => {
+  it("honours a page range", { skip: needsFilters }, async () => {
     const { bytes } = await printAndCollect(makePdf({ pages: 8 }), {
       jobName: "e2e-range",
       pages: "2-4",
@@ -162,7 +205,7 @@ describe("end-to-end printing", { skip }, () => {
     assert.equal(countPdfPages(bytes), 3);
   });
 
-  it("honours an open-ended page range", { skip: rendersOptions ? false : "queue does not run filters" }, async () => {
+  it("honours an open-ended page range", { skip: needsFilters }, async () => {
     const { bytes } = await printAndCollect(makePdf({ pages: 6 }), {
       jobName: "e2e-open-range",
       pages: "5-",
@@ -171,7 +214,7 @@ describe("end-to-end printing", { skip }, () => {
     assert.equal(countPdfPages(bytes), 2);
   });
 
-  it("honours an odd page subset", { skip: rendersOptions ? false : "queue does not run filters" }, async () => {
+  it("honours an odd page subset", { skip: needsFilters }, async () => {
     const { bytes } = await printAndCollect(makePdf({ pages: 7 }), {
       jobName: "e2e-odd",
       pageSubset: "odd",
@@ -180,7 +223,7 @@ describe("end-to-end printing", { skip }, () => {
     assert.equal(countPdfPages(bytes), 4);
   });
 
-  it("honours a paper size", { skip: rendersOptions ? false : "queue does not run filters" }, async () => {
+  it("honours a paper size", { skip: needsFilters }, async () => {
     const { bytes } = await printAndCollect(makePdf({ pages: 1 }), {
       jobName: "e2e-a5",
       paperSize: "A5",
@@ -191,18 +234,24 @@ describe("end-to-end printing", { skip }, () => {
     assert.match(text, /MediaBox\s*\[\s*0\s+0\s+42[01](\.\d+)?\s+59[45](\.\d+)?/);
   });
 
-  it("prints multiple copies", { skip: rendersOptions ? false : "queue does not run filters" }, async () => {
-    const { bytes } = await printAndCollect(makePdf({ pages: 2 }), {
+  it("prints multiple copies", async () => {
+    const { job, bytes } = await printAndCollect(makePdf({ pages: 2 }), {
       jobName: "e2e-copies",
       copies: 2,
     });
-    assert.ok(bytes);
-    // A file-backed queue collapses copies into one document, so the sheet count
-    // is the only observable effect.
-    assert.equal(countPdfPages(bytes), 4);
+    assert.ok(job.jobId > 0);
+    assert.ok(bytes, "the queue should have produced output");
+
+    // Whether copies show up as extra pages depends on the driver: one that can
+    // produce copies itself is handed dmCopies and emits a single document, while
+    // cups-filters duplicates the pages. Only assert the count where the setup
+    // script has established which of the two this queue does.
+    if (copiesMultiplyPages) {
+      assert.equal(countPdfPages(bytes), 4);
+    }
   });
 
-  it("reads back the state of a submitted job", async () => {
+  it("reads back the state of a submitted job", { skip: needsJobStatus }, async () => {
     const job = await printPdf(makePdf({ pages: 1 }), {
       printer,
       jobName: "e2e-status",
@@ -224,8 +273,16 @@ describe("end-to-end printing", { skip }, () => {
     }
   });
 
-  it("reports null for a job id that was never issued", async () => {
+  it("reports null for a job id that was never issued", { skip: needsJobStatus }, async () => {
     assert.equal(await getJob(printer, 999_999), null);
+  });
+
+  it("says so plainly when the fallback cannot report job status", {
+    skip: isLpFallback ? false : "only applies to the lp fallback",
+  }, async () => {
+    // Refusing is the honest answer here: the command line tools report state as
+    // localised prose, and guessing at it would be worse than saying no.
+    await assert.rejects(getJob(printer, 1), { code: "EBACKENDUNAVAILABLE" });
   });
 
   it("rejects printing to a queue that does not exist", async () => {

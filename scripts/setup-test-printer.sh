@@ -76,8 +76,10 @@ setup_linux() {
 
   emit "PRINT_IT_NOW_TEST_PRINTER=$QUEUE"
   emit "PRINT_IT_NOW_TEST_OUTPUT_DIR=$out"
-  # cups-pdf runs the full filter chain, so option handling is observable.
+  # cups-pdf runs the full filter chain, so page selection, paper size and copies
+  # are all observable in the output.
   emit "PRINT_IT_NOW_TEST_RENDERS=1"
+  emit "PRINT_IT_NOW_TEST_COPIES=1"
 }
 
 setup_macos() {
@@ -101,9 +103,10 @@ setup_macos() {
   sudo cupsaccept "$QUEUE"
 
   emit "PRINT_IT_NOW_TEST_PRINTER=$QUEUE"
-  emit "PRINT_IT_NOW_TEST_OUTPUT_DIR=$out"
-  # Deliberately not set: a raw queue does no rendering, so the option-dependent
-  # assertions would be checking nothing.
+  # A raw queue overwrites one fixed path rather than naming a file per job.
+  emit "PRINT_IT_NOW_TEST_OUTPUT_FILE=$out/output.pdf"
+  # Deliberately not setting PRINT_IT_NOW_TEST_RENDERS or _COPIES: a raw queue
+  # applies no options, so those assertions would be checking nothing.
 }
 
 main() {

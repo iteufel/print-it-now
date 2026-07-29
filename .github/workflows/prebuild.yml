@@ -1,0 +1,175 @@
+name: Prebuild
+
+# Builds the binaries that ship in the npm package, so installing needs no C++
+# toolchain. prebuildify lays them out as prebuilds/<platform>-<arch>/, which is
+# the layout node-gyp-build looks in -- and the one Bun understands too.
+#
+# Run this before publishing: download every artifact into prebuilds/, then
+# `npm publish`. A dry run on a pull request is available through
+# workflow_dispatch.
+
+on:
+  workflow_dispatch:
+  release:
+    types: [created]
+
+jobs:
+  prebuild:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: win32-x64, os: windows-2022 }
+          - { target: win32-arm64, os: windows-11-arm }
+          - { target: darwin-x64, os: macos-13 }
+          - { target: darwin-arm64, os: macos-15 }
+          - { target: linux-x64, os: ubuntu-24.04 }
+          - { target: linux-arm64, os: ubuntu-24.04-arm }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci --ignore-scripts
+
+      - name: Build the prebuilt addon
+        run: npm run prebuild
+
+      # PDFium goes in the same directory as the addon, because the loader looks
+      # for pdfium.dll next to the .node file rather than relying on the DLL
+      # search order. Staged after the build so nothing can clean it away.
+      - name: Stage the pinned PDFium runtime
+        if: startsWith(matrix.target, 'win32-')
+        run: node scripts/fetch-pdfium.mjs --target ${{ matrix.target }}
+
+      - name: Show what was produced
+        shell: bash
+        run: ls -lR prebuilds
+
+      # A prebuild that silently fails to load is worse than having none at all,
+      # because node-gyp-build would otherwise have fallen back to a source build.
+      # Deleting build/ first makes sure it really is the prebuilt binary being
+      # exercised, and describe() reaches all the way to the platform's printing
+      # subsystem -- on Windows that means proving pdfium.dll was found next to
+      # the addon, which is the part of the design most likely to break.
+      - name: Verify the prebuilt addon loads
+        shell: bash
+        run: |
+          rm -rf build
+          node -e "
+            const load = require('node-gyp-build');
+            const addon = load(process.cwd());
+            for (const name of ['print', 'listPrinters', 'describe', 'cancelJob']) {
+              if (typeof addon[name] !== 'function') {
+                throw new Error('the prebuilt addon is missing ' + name);
+              }
+            }
+            addon.describe().then((info) => {
+              console.log('backend:', JSON.stringify(info));
+              if (process.platform === 'win32' && !info.pdfiumVersion) {
+                throw new Error('pdfium.dll was not found next to the prebuilt addon');
+              }
+            }).catch((error) => { console.error(error); process.exit(1); });
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prebuilds-${{ matrix.target }}
+          path: prebuilds/
+          if-no-files-found: error
+
+  # glibc and musl are not ABI compatible, so Alpine needs its own binaries.
+  # prebuildify's --tag-libc names them so node-gyp-build picks the right one.
+  prebuild-musl:
+    name: linux-${{ matrix.arch }}-musl
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, os: ubuntu-24.04 }
+          - { arch: arm64, os: ubuntu-24.04-arm }
+    container:
+      image: node:22-alpine
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install a build toolchain
+        run: apk add --no-cache python3 make g++ bash
+
+      - run: npm ci --ignore-scripts
+
+      - name: Build the prebuilt addon
+        run: npm run prebuild
+
+      - run: ls -lR prebuilds
+
+      - name: Verify the prebuilt addon loads
+        run: |
+          rm -rf build
+          node -e "
+            const addon = require('node-gyp-build')(process.cwd());
+            if (typeof addon.print !== 'function') {
+              throw new Error('the prebuilt addon is missing exports');
+            }
+            console.log('the musl prebuild loads');
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prebuilds-linux-${{ matrix.arch }}-musl
+          path: prebuilds/
+          if-no-files-found: error
+
+  collect:
+    name: Collect prebuilds
+    needs: [prebuild, prebuild-musl]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: prebuilds-*
+          path: prebuilds/
+          merge-multiple: true
+
+      - run: ls -lR prebuilds
+
+      - name: Check every expected target is present
+        run: |
+          missing=0
+          for target in win32-x64 win32-arm64 darwin-x64 darwin-arm64 linux-x64 linux-arm64; do
+            if ! ls prebuilds/"$target"/*.node >/dev/null 2>&1; then
+              echo "::error::no addon was built for $target"
+              missing=1
+            fi
+          done
+          # Only Windows ships PDFium; CUPS reads PDF natively everywhere else.
+          for target in win32-x64 win32-arm64; do
+            if [ ! -f "prebuilds/$target/pdfium.dll" ]; then
+              echo "::error::pdfium.dll is missing from prebuilds/$target"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - run: npm ci --ignore-scripts
+      - run: npm run build:ts
+
+      - name: Build the publishable tarball
+        run: npm pack
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          path: "*.tgz"
+          if-no-files-found: error
