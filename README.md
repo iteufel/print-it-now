@@ -414,6 +414,48 @@ against what actually came out rather than against what was asked for.
 contributors on Linux get that feedback without waiting for a Windows runner. It
 is not a substitute for the real MSVC build, but it catches the ordinary mistakes.
 
+## Releasing to npm
+
+Publishing is driven by a GitHub Release. The [Prebuild](.github/workflows/prebuild.yml)
+workflow builds every platform binary, packs the tarball, and publishes it to
+the public npm registry as [`print-it-now`](https://www.npmjs.com/package/print-it-now).
+
+1. Bump `"version"` in `package.json` (and commit it to `main`).
+2. Create a GitHub Release whose tag is exactly `v` plus that version
+   (for example version `0.1.0` → tag `v0.1.0`). The publish job refuses a
+   mismatched tag.
+3. Wait for the Prebuild workflow to finish; the **Publish to npm** job uploads
+   the packed tarball.
+
+### Auth
+
+Configure **one** of the following on the GitHub repository:
+
+**Trusted Publishing (preferred).** On
+[npmjs.com](https://www.npmjs.com/) → the `print-it-now` package → **Settings** →
+**Trusted Publisher**, add a GitHub Actions publisher with:
+
+| Field | Value |
+| --- | --- |
+| Organization or user | `iteufel` |
+| Repository | `print-it-now` |
+| Workflow filename | `prebuild.yml` |
+| Environment | _(leave empty)_ |
+
+No long-lived token is stored. The workflow requests `id-token: write` and
+publishes with `--provenance`. For a brand-new package name that does not exist
+on the registry yet, publish once with an automation token (below), then switch
+to Trusted Publishing.
+
+**Automation token (fallback).** Create an npm
+[automation token](https://docs.npmjs.com/creating-and-viewing-access-tokens)
+with publish permission for the package (or for your user, for the first
+publish), then add it as the repository secret `NPM_TOKEN`. The publish job uses
+it when that secret is set.
+
+`workflow_dispatch` on the Prebuild workflow is a dry run: it builds and packs,
+but never publishes.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
