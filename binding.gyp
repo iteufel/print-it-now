@@ -9,6 +9,7 @@
       "cflags_cc!": ["-fno-exceptions"],
       "sources": [
         "native/src/addon.cc",
+        "native/src/bitmap.cc",
         "native/src/convert.cc",
         "native/src/workers.cc"
       ],

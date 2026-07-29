@@ -23,6 +23,10 @@ enum class ScaleMode { kActual = 0, kFit = 1, kShrink = 2, kNoScaleClip = 3 };
 
 enum class RenderMode { kVector = 0, kBitmap = 1 };
 
+enum class DocumentKind { kPdf = 0, kBitmap = 1 };
+
+enum class PixelFormat { kRgba = 0, kBgra = 1 };
+
 // Windows-only settings. Every numeric field already holds the DEVMODE value
 // the driver expects; the semantic-to-numeric mapping lives in src/options.ts so
 // that it can be unit tested without a printer attached. A field left empty
@@ -53,11 +57,18 @@ struct PrintRequest {
   std::string printer;
   std::string job_name;
 
-  // Exactly one of these is populated. Binary input is handed straight to the
-  // printing subsystem, so nothing is ever staged through a temporary file.
+  // Exactly one of these is populated for PDF jobs. Binary input is handed
+  // straight to the printing subsystem, so nothing is ever staged through a
+  // temporary file. Bitmap jobs always carry `data`.
+  DocumentKind kind = DocumentKind::kPdf;
   std::string file_path;
   const uint8_t* data = nullptr;
   size_t data_length = 0;
+
+  // Meaningful only when kind == DocumentKind::kBitmap.
+  int bitmap_width = 0;
+  int bitmap_height = 0;
+  PixelFormat pixel_format = PixelFormat::kRgba;
 
   int copies = 1;
   bool collate = true;

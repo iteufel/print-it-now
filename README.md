@@ -1,24 +1,31 @@
 # print-it-now
 
-Headless PDF printing for Node.js and Bun on Windows, macOS and Linux. No dialog,
-no viewer, no user present.
+Headless PDF and bitmap printing for Node.js and Bun on Windows, macOS and Linux.
+No dialog, no viewer, no user present.
 
 ```js
-import { printPdf } from "print-it-now";
+import { printPdf, printBitmap } from "print-it-now";
 
 await printPdf("./invoice.pdf", { printer: "Office Laser", copies: 2, duplex: "long-edge" });
+
+await printBitmap(
+  { width: 200, height: 100, data: pixels },
+  { printer: "Office Laser", scale: "fit" },
+);
 ```
 
 - **Windows** has no PDF printing of its own, so PDFium renders each page onto a
   printer device context obtained from the spooler. This is the approach
   [PdfiumViewer](https://github.com/pvginkel/PdfiumViewer) takes on .NET,
-  reimplemented in C++ as a Node-API addon.
-- **macOS and Linux** hand the PDF bytes straight to CUPS over IPP, because CUPS
-  is itself a PDF-native print system. No rendering, no rasterising, no loss.
+  reimplemented in C++ as a Node-API addon. Raw bitmaps are blitted the same way,
+  without PDFium.
+- **macOS and Linux** hand PDF bytes straight to CUPS over IPP, because CUPS
+  is itself a PDF-native print system. Bitmaps are wrapped in an in-memory BMP
+  and submitted as `image/bmp`.
 - **Prebuilt binaries** for eight targets, so installing needs no C++ toolchain.
 - **Node and Bun**, through Node-API. Both are tested on all three platforms.
-- **In-memory PDFs never touch disk.** A `Buffer` goes straight to the printing
-  subsystem rather than through a temporary file.
+- **In-memory documents never touch disk.** A `Buffer` goes straight to the
+  printing subsystem rather than through a temporary file.
 
 ## Install
 
@@ -145,7 +152,7 @@ produced would look like a success on Linux and a failure on Windows.
 | `color`                    | `"color" \| "monochrome" \| "auto"`                     | driver default   |
 | `quality`                  | `"draft" \| "normal" \| "high"`                         | driver default   |
 | `scale`                    | `"actual" \| "fit" \| "shrink" \| "noscale-clip"`       | `"shrink"`       |
-| `dpi`                      | `number` — Windows bitmap mode only                     | device native    |
+| `dpi`                      | `number` — Windows PDF bitmap mode only                 | device native    |
 | `numberUp`                 | `1 \| 2 \| 4 \| 6 \| 9 \| 16`                           | `1`              |
 | `ipp`                      | `Record<string, string>` — raw IPP, CUPS only           | none             |
 | `windows`                  | see [Windows options](#windows-options)                 | —                |
@@ -174,6 +181,49 @@ landscape would override it; omitting it will not.
 so `"US Letter"`, `"us-letter"` and `"usletter"` are the same size.
 `knownPaperSizeNames()` returns the list. Anything else can be given as
 `{ widthMm, heightMm }`.
+
+### `printBitmap(source, options?): Promise<PrintJob>`
+
+Prints a raw pixel buffer without wrapping it in a PDF.
+
+```js
+import { printBitmap } from "print-it-now";
+
+const width = 200;
+const height = 100;
+const data = Buffer.alloc(width * height * 4);
+for (let i = 0; i < data.length; i += 4) {
+  data[i] = 0;       // R
+  data[i + 1] = 128; // G
+  data[i + 2] = 255; // B
+  data[i + 3] = 255; // A
+}
+
+await printBitmap(
+  { width, height, data, format: "rgba" },
+  { printer: "Office Laser", paperSize: "A4", scale: "fit", dpi: 72 },
+);
+```
+
+`source` is `{ width, height, data, format? }`:
+
+| Field    | Type                                      | Default  |
+| -------- | ----------------------------------------- | -------- |
+| `width`  | positive integer                            | required |
+| `height` | positive integer                          | required |
+| `data`   | `Buffer \| Uint8Array \| ArrayBuffer`     | required |
+| `format` | `"rgba" \| "bgra"`                        | `"rgba"` |
+
+`data` must be exactly `width * height * 4` bytes. Alpha is composited onto
+white. On Windows the pixels are blitted straight onto a printer device context;
+on macOS and Linux they are wrapped in an in-memory BMP and submitted to CUPS as
+`image/bmp`.
+
+Options match [`printPdf`](#printpdfsource-options-promiseprintjob) except
+page-selection and imposition knobs (`pages`, `pageSubset`, `reverse`,
+`numberUp`, `windows.renderMode`, `windows.printMode`), which reject if passed.
+`dpi` is the bitmap's intrinsic resolution used for placement (default **72**,
+so one pixel is one PostScript point).
 
 ### `listPrinters(): Promise<Printer[]>`
 

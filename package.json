@@ -1,7 +1,7 @@
 {
   "name": "print-it-now",
   "version": "0.1.0",
-  "description": "Headless PDF printing for Node.js and Bun on Windows, macOS and Linux. PDFium + winspool on Windows, CUPS everywhere else.",
+  "description": "Headless PDF and bitmap printing for Node.js and Bun on Windows, macOS and Linux. PDFium + winspool on Windows, CUPS everywhere else.",
   "license": "MIT",
   "author": "iteufel",
   "repository": {
@@ -14,6 +14,7 @@
   "homepage": "https://github.com/iteufel/print-it-now#readme",
   "keywords": [
     "pdf",
+    "bitmap",
     "print",
     "printer",
     "printing",

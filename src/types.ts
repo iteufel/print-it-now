@@ -6,6 +6,29 @@
  */
 export type PdfSource = string | Buffer | Uint8Array | ArrayBuffer;
 
+/**
+ * Channel order of a {@link BitmapSource}'s pixel buffer.
+ *
+ * - `rgba`: red, green, blue, alpha — the usual layout from canvas and most JS
+ *   image libraries.
+ * - `bgra`: blue, green, red, alpha — Windows DIB order.
+ */
+export type BitmapPixelFormat = "rgba" | "bgra";
+
+/**
+ * A raw pixel buffer to hand to {@link printBitmap}.
+ *
+ * `data` must contain exactly `width * height * 4` bytes. Alpha is composited
+ * onto white before printing; there is no separate background colour.
+ */
+export interface BitmapSource {
+  width: number;
+  height: number;
+  data: Buffer | Uint8Array | ArrayBuffer;
+  /** Defaults to `rgba`. */
+  format?: BitmapPixelFormat;
+}
+
 /** Which side(s) of the sheet to print on. */
 export type Duplex = "simplex" | "long-edge" | "short-edge";
 
@@ -122,8 +145,12 @@ export interface PrintOptions {
   /** Defaults to `shrink`. */
   scale?: ScaleMode;
   /**
-   * Rasterisation resolution in DPI. Only used by the Windows `bitmap` render
-   * mode; ignored elsewhere. Defaults to the device's own resolution.
+   * Resolution in DPI.
+   *
+   * For {@link printPdf} this is only used by the Windows `bitmap` render mode
+   * (defaults to the device's own resolution). For {@link printBitmap} it is
+   * the intrinsic resolution of the pixel buffer used for placement (defaults
+   * to 72, so one pixel is one PostScript point).
    */
   dpi?: number;
   /** Pages per sheet. Must be one of 1, 2, 4, 6, 9 or 16. Defaults to 1. */
@@ -141,6 +168,18 @@ export interface PrintOptions {
    */
   ignoreUnsupportedOptions?: boolean;
 }
+
+/**
+ * Options accepted by {@link printBitmap}.
+ *
+ * Page-selection and imposition knobs from {@link PrintOptions} do not apply to
+ * a single bitmap, so they are omitted here. Passing them at runtime still
+ * rejects with {@link InvalidOptionError}.
+ */
+export type BitmapPrintOptions = Omit<
+  PrintOptions,
+  "pages" | "pageSubset" | "reverse" | "numberUp"
+>;
 
 /** Lifecycle state of a queued job, normalised across backends. */
 export type JobState =

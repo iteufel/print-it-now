@@ -404,7 +404,129 @@ Status DefaultPrinter(std::string* out) {
   return Status::Ok();
 }
 
-Status Print(const PrintRequest& request, PrintResult* out) {
+void ResolveCopyLoops(const std::wstring& printer,
+                      const win::DevMode& devmode,
+                      const PrintRequest& request,
+                      int* document_passes,
+                      int* repeats_per_page) {
+  // When the driver can produce copies itself we let it, because it is far
+  // faster than re-rendering and it can use the device's own collating hardware.
+  // Otherwise the render loop repeats: the whole document per copy when
+  // collating, each page in turn when not.
+  *document_passes = 1;
+  *repeats_per_page = 1;
+  const bool driver_handles_copies =
+      DeviceCapabilitiesW(printer.c_str(), nullptr, DC_COPIES, nullptr, devmode.get()) > 1;
+  if (!driver_handles_copies && request.copies > 1) {
+    if (request.collate) {
+      *document_passes = request.copies;
+    } else {
+      *repeats_per_page = request.copies;
+    }
+  }
+}
+
+Status PrintBitmap(const PrintRequest& request, PrintResult* out) {
+  if (request.data == nullptr) {
+    return Status::Error(code::kBackend, "Bitmap print request carries no pixel data");
+  }
+
+  const std::wstring printer = win::Widen(request.printer);
+
+  win::PrinterHandle printer_handle;
+  PIN_RETURN_IF_ERROR(printer_handle.Open(printer));
+
+  win::DevMode devmode;
+  PIN_RETURN_IF_ERROR(devmode.Apply(printer_handle.get(), printer, request.windows,
+                                    request.copies));
+
+  DeviceContext dc;
+  dc.Reset(CreateDCW(L"WINSPOOL", printer.c_str(), nullptr, devmode.get()));
+  if (dc.get() == nullptr) {
+    const DWORD error = GetLastError();
+    return Status::Error(code::kBackend,
+                        "Could not create a device context for \"" + request.printer +
+                            "\": " + win::FormatLastError(error),
+                        static_cast<int>(error), win::FormatLastError(error));
+  }
+
+  const SheetMetrics sheet = win::ReadSheetMetrics(dc.get());
+  const int dpi = request.windows.dpi > 0 ? request.windows.dpi : 72;
+  const double width_pt =
+      static_cast<double>(request.bitmap_width) * 72.0 / static_cast<double>(dpi);
+  const double height_pt =
+      static_cast<double>(request.bitmap_height) * 72.0 / static_cast<double>(dpi);
+  const Placement placement =
+      ComputePlacement(width_pt, height_pt, sheet, request.scale, /*auto_rotate=*/true);
+
+  int document_passes = 1;
+  int repeats_per_page = 1;
+  ResolveCopyLoops(printer, devmode, request, &document_passes, &repeats_per_page);
+
+  const std::wstring job_name = win::Widen(request.job_name);
+  const std::wstring output_file = win::Widen(request.windows.output_file);
+
+  DOCINFOW doc_info{};
+  doc_info.cbSize = sizeof(doc_info);
+  doc_info.lpszDocName = job_name.empty() ? L"print-it-now" : job_name.c_str();
+  doc_info.lpszOutput = output_file.empty() ? nullptr : output_file.c_str();
+
+  DocumentScope document_scope(dc.get());
+  const int job_id = StartDocW(dc.get(), &doc_info);
+  if (job_id <= 0) {
+    const DWORD error = GetLastError();
+    if (error == ERROR_CANCELLED) {
+      return Status::Error(code::kBackend,
+                          "The print job was cancelled before it started. A driver that "
+                          "writes to a file needs windows.outputFile set, or it will wait "
+                          "for a save dialog that a headless process never answers",
+                          static_cast<int>(error), win::FormatLastError(error));
+    }
+    return Status::Error(code::kBackend,
+                        "Could not start the print job: " + win::FormatLastError(error),
+                        static_cast<int>(error), win::FormatLastError(error));
+  }
+  document_scope.MarkOpen();
+
+  for (int pass = 0; pass < document_passes; ++pass) {
+    for (int repeat = 0; repeat < repeats_per_page; ++repeat) {
+      if (StartPage(dc.get()) <= 0) {
+        const DWORD error = GetLastError();
+        return Status::Error(code::kBackend,
+                            "The driver refused to start a page: " +
+                                win::FormatLastError(error),
+                            static_cast<int>(error), win::FormatLastError(error));
+      }
+      SetMapMode(dc.get(), MM_TEXT);
+
+      const Status status = win::RenderRawBitmap(dc.get(), placement, request.pixel_format,
+                                                 request.bitmap_width, request.bitmap_height,
+                                                 request.data, request.data_length);
+      if (!status.ok()) {
+        EndPage(dc.get());
+        return status;
+      }
+
+      if (EndPage(dc.get()) <= 0) {
+        const DWORD error = GetLastError();
+        return Status::Error(code::kBackend,
+                            "The driver refused to finish a page: " +
+                                win::FormatLastError(error),
+                            static_cast<int>(error), win::FormatLastError(error));
+      }
+    }
+  }
+
+  document_scope.Commit();
+
+  out->job_id = job_id;
+  out->printer = request.printer;
+  out->job_name = request.job_name;
+  out->page_count = document_passes * repeats_per_page;
+  return Status::Ok();
+}
+
+Status PrintPdf(const PrintRequest& request, PrintResult* out) {
   Status status;
   const pdfium::Library* pdfium = pdfium::Load(&status);
   if (pdfium == nullptr) return status;
@@ -453,21 +575,9 @@ Status Print(const PrintRequest& request, PrintResult* out) {
 
   const SheetMetrics sheet = win::ReadSheetMetrics(dc.get());
 
-  // When the driver can produce copies itself we let it, because it is far
-  // faster than re-rendering and it can use the device's own collating hardware.
-  // Otherwise the render loop repeats: the whole document per copy when
-  // collating, each page in turn when not.
-  const bool driver_handles_copies =
-      DeviceCapabilitiesW(printer.c_str(), nullptr, DC_COPIES, nullptr, devmode.get()) > 1;
   int document_passes = 1;
   int repeats_per_page = 1;
-  if (!driver_handles_copies && request.copies > 1) {
-    if (request.collate) {
-      document_passes = request.copies;
-    } else {
-      repeats_per_page = request.copies;
-    }
-  }
+  ResolveCopyLoops(printer, devmode, request, &document_passes, &repeats_per_page);
 
   const std::wstring job_name = win::Widen(request.job_name);
   const std::wstring output_file = win::Widen(request.windows.output_file);
@@ -508,6 +618,13 @@ Status Print(const PrintRequest& request, PrintResult* out) {
   out->job_name = request.job_name;
   out->page_count = static_cast<int>(pages.size()) * document_passes * repeats_per_page;
   return Status::Ok();
+}
+
+Status Print(const PrintRequest& request, PrintResult* out) {
+  if (request.kind == DocumentKind::kBitmap) {
+    return PrintBitmap(request, out);
+  }
+  return PrintPdf(request, out);
 }
 
 Status QueryJob(const std::string& printer, int job_id, JobInfo* out, bool* found) {

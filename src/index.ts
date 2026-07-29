@@ -11,10 +11,19 @@ import {
   PrintError,
   fromNativeError,
 } from "./errors.js";
+import { encodeBmp } from "./fallback/bmp.js";
 import * as lp from "./fallback/lp.js";
-import { buildNativeRequest, resolveOptions } from "./options.js";
+import {
+  buildBitmapNativeRequest,
+  buildNativeRequest,
+  readBitmapSource,
+  resolveBitmapOptions,
+  resolveOptions,
+} from "./options.js";
 import type {
   BackendInfo,
+  BitmapPrintOptions,
+  BitmapSource,
   JobStatus,
   PdfSource,
   Printer,
@@ -205,6 +214,68 @@ export async function printPdf(source: PdfSource, options: PrintOptions = {}): P
 
   try {
     if (!backend.native) return await lp.print(request);
+
+    const result = await backend.native.print(request);
+    return {
+      jobId: result.jobId,
+      printer: result.printer,
+      jobName: result.jobName,
+      ...(result.pageCount !== undefined ? { pageCount: result.pageCount } : {}),
+    };
+  } catch (error) {
+    throw fromNativeError(error, { printer });
+  }
+}
+
+/**
+ * Prints a raw pixel buffer, headlessly: no dialog, no viewer, no user present.
+ *
+ * On Windows the pixels are blitted straight onto a printer device context. On
+ * macOS and Linux they are wrapped in an in-memory BMP and handed to CUPS as
+ * `image/bmp`, so nothing is staged through a temporary file either way.
+ *
+ * Resolves once the printing subsystem has accepted the job, which is not the
+ * same as once it has reached paper. Poll {@link getJob} for that.
+ *
+ * @param source Width, height and tightly packed 4-byte pixels (`rgba` by
+ *   default). Alpha is composited onto white.
+ */
+export async function printBitmap(
+  source: BitmapSource,
+  options: BitmapPrintOptions = {},
+): Promise<PrintJob> {
+  const resolved = resolveBitmapOptions(options);
+  const bitmap = readBitmapSource(source);
+  const backend = await getBackend();
+  const printer = await resolvePrinter(resolved.printer);
+  const jobName = resolved.jobName ?? bitmap.defaultJobName;
+
+  const request = buildBitmapNativeRequest(
+    resolved,
+    printer,
+    jobName,
+    {
+      data: bitmap.data,
+      width: bitmap.width,
+      height: bitmap.height,
+      format: bitmap.format,
+    },
+    backend.name,
+  );
+
+  try {
+    if (!backend.native) {
+      // The native CUPS path encodes the BMP itself; the command-line fallback
+      // has to do it here so `lp` receives a document it knows how to filter.
+      const bmp = encodeBmp(
+        bitmap.width,
+        bitmap.height,
+        bitmap.data,
+        bitmap.format,
+        resolved.dpi ?? 72,
+      );
+      return await lp.print({ ...request, data: bmp });
+    }
 
     const result = await backend.native.print(request);
     return {

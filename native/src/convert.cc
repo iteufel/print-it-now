@@ -146,6 +146,10 @@ Status ReadPrintRequest(const Napi::Object& source,
   PIN_RETURN_IF_ERROR(ReadString(source, "jobName", &request->job_name));
   PIN_RETURN_IF_ERROR(ReadOptionalString(source, "filePath", &request->file_path));
 
+  int kind = 0;
+  PIN_RETURN_IF_ERROR(ReadInt(source, "kind", &kind));
+  request->kind = kind == 1 ? DocumentKind::kBitmap : DocumentKind::kPdf;
+
   Napi::Value data = source.Get("data");
   if (!data.IsUndefined() && !data.IsNull()) {
     if (!data.IsTypedArray()) return MissingField("data");
@@ -159,7 +163,18 @@ Status ReadPrintRequest(const Napi::Object& source,
     *keep_alive = Napi::Persistent(Napi::Value(data));
   }
 
-  if (request->file_path.empty() && request->data == nullptr) {
+  if (request->kind == DocumentKind::kBitmap) {
+    PIN_RETURN_IF_ERROR(ReadInt(source, "bitmapWidth", &request->bitmap_width));
+    PIN_RETURN_IF_ERROR(ReadInt(source, "bitmapHeight", &request->bitmap_height));
+    int pixel_format = 0;
+    PIN_RETURN_IF_ERROR(ReadInt(source, "pixelFormat", &pixel_format));
+    request->pixel_format =
+        pixel_format == 1 ? PixelFormat::kBgra : PixelFormat::kRgba;
+    if (request->data == nullptr) {
+      return Status::Error(code::kBackend,
+                           "Internal error: bitmap request carries no pixel data");
+    }
+  } else if (request->file_path.empty() && request->data == nullptr) {
     return Status::Error(code::kBackend,
                          "Internal error: request carries neither filePath nor data");
   }
