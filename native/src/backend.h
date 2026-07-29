@@ -138,7 +138,11 @@ Status ListPrinters(std::vector<PrinterInfo>* out);
 Status DefaultPrinter(std::string* out);
 Status Print(const PrintRequest& request, PrintResult* out);
 // Sets *found to false when the queue has no such job.
-Status GetJob(const std::string& printer, int job_id, JobInfo* out, bool* found);
+//
+// Named QueryJob rather than GetJob because <winspool.h> defines `GetJob` as a
+// macro selecting between GetJobA and GetJobW, which would silently rename this
+// declaration on Windows and leave the call sites resolving to the wrong thing.
+Status QueryJob(const std::string& printer, int job_id, JobInfo* out, bool* found);
 Status CancelJob(const std::string& printer, int job_id);
 
 }  // namespace backend

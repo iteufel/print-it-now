@@ -293,7 +293,7 @@ Status Print(const PrintRequest& request, PrintResult* out) {
   return Status::Ok();
 }
 
-Status GetJob(const std::string& printer, int job_id, JobInfo* out, bool* found) {
+Status QueryJob(const std::string& printer, int job_id, JobInfo* out, bool* found) {
   *found = false;
   Status status;
   const cups::Library* cups = cups::Load(&status);

@@ -5,6 +5,7 @@
 #include "backend.h"
 #include "convert.h"
 #include "page_selection.h"
+#include "placement.h"
 #include "workers.h"
 
 namespace {
@@ -54,6 +55,62 @@ Napi::Value ExpandPageSelection(const Napi::CallbackInfo& info) {
   return out;
 }
 
+// Also exposed for the test suite. Mapping a page onto a sheet is the fiddliest
+// part of the Windows path -- printable versus physical area, the device's own
+// origin offset, auto-rotation, four scaling modes -- and it is pure arithmetic,
+// so it is worth testing directly on a machine with no printer at all.
+Napi::Value ComputePlacement(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 4 || !info[0].IsNumber() || !info[1].IsNumber() || !info[2].IsObject() ||
+      !info[3].IsNumber()) {
+    Napi::TypeError::New(env,
+                         "expected (pageWidthPt: number, pageHeightPt: number, "
+                         "sheet: object, scale: number, autoRotate?: boolean)")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  Napi::Object raw = info[2].As<Napi::Object>();
+  const auto read = [&raw](const char* key, int fallback) {
+    Napi::Value value = raw.Get(key);
+    return value.IsNumber() ? value.As<Napi::Number>().Int32Value() : fallback;
+  };
+
+  pin::SheetMetrics sheet;
+  sheet.dpi_x = read("dpiX", 300);
+  sheet.dpi_y = read("dpiY", 300);
+  sheet.physical_width = read("physicalWidth", 0);
+  sheet.physical_height = read("physicalHeight", 0);
+  sheet.printable_width = read("printableWidth", 0);
+  sheet.printable_height = read("printableHeight", 0);
+  sheet.offset_x = read("offsetX", 0);
+  sheet.offset_y = read("offsetY", 0);
+
+  pin::ScaleMode scale;
+  switch (info[3].As<Napi::Number>().Int32Value()) {
+    case 0: scale = pin::ScaleMode::kActual; break;
+    case 1: scale = pin::ScaleMode::kFit; break;
+    case 3: scale = pin::ScaleMode::kNoScaleClip; break;
+    default: scale = pin::ScaleMode::kShrink; break;
+  }
+
+  const bool auto_rotate = info.Length() < 5 || !info[4].IsBoolean()
+                               ? true
+                               : info[4].As<Napi::Boolean>().Value();
+
+  const pin::Placement placement =
+      pin::ComputePlacement(info[0].As<Napi::Number>().DoubleValue(),
+                            info[1].As<Napi::Number>().DoubleValue(), sheet, scale, auto_rotate);
+
+  Napi::Object out = Napi::Object::New(env);
+  out.Set("x", Napi::Number::New(env, placement.x));
+  out.Set("y", Napi::Number::New(env, placement.y));
+  out.Set("width", Napi::Number::New(env, placement.width));
+  out.Set("height", Napi::Number::New(env, placement.height));
+  out.Set("rotate", Napi::Number::New(env, placement.rotate));
+  return out;
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("describe", Napi::Function::New(env, pin::StartDescribe));
   exports.Set("listPrinters", Napi::Function::New(env, pin::StartListPrinters));
@@ -62,6 +119,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("getJob", Napi::Function::New(env, pin::StartGetJob));
   exports.Set("cancelJob", Napi::Function::New(env, pin::StartCancelJob));
   exports.Set("_expandPageSelection", Napi::Function::New(env, ExpandPageSelection));
+  exports.Set("_computePlacement", Napi::Function::New(env, ComputePlacement));
   return exports;
 }
 

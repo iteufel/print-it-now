@@ -70,7 +70,7 @@ class GetJobWorker final : public BackendWorker<JobLookup> {
 
  protected:
   Status Run(JobLookup* out) override {
-    return backend::GetJob(printer_, job_id_, &out->job, &out->found);
+    return backend::QueryJob(printer_, job_id_, &out->job, &out->found);
   }
   Napi::Value Convert(Napi::Env env, const JobLookup& result) override {
     if (!result.found) return env.Null();

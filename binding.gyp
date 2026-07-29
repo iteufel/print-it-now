@@ -31,7 +31,8 @@
             "native/src/win/backend_win.cc",
             "native/src/win/devmode.cc",
             "native/src/win/pdfium_loader.cc",
-            "native/src/win/render_win.cc"
+            "native/src/win/render_win.cc",
+            "native/src/win/win_util.cc"
           ],
           "defines": [
             "PIN_BACKEND_WINDOWS=1",
