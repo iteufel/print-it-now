@@ -11,11 +11,16 @@
 export { resetBackendCache, getBackend } from "./backend.js";
 export { loadNative, isNativeAvailable } from "./binding.js";
 export {
+  DOCUMENT_KIND_CODE,
+  PIXEL_FORMAT_CODE,
   PRINT_MODE_CODE,
   RENDER_MODE_CODE,
   SCALE_CODE,
   SUBSET_CODE,
+  buildBitmapNativeRequest,
   buildNativeRequest,
+  readBitmapSource,
+  resolveBitmapOptions,
   resolveOptions,
   toIppOptions,
   toWindowsSettings,
@@ -34,3 +39,4 @@ export {
   toTenthsOfMm,
 } from "./paper.js";
 export * as lpFallback from "./fallback/lp.js";
+export { encodeBmp } from "./fallback/bmp.js";

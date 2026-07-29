@@ -11,6 +11,9 @@ import {
 } from "./paper.js";
 import type {
   BackendName,
+  BitmapPixelFormat,
+  BitmapPrintOptions,
+  BitmapSource,
   ColorMode,
   Duplex,
   Orientation,
@@ -24,6 +27,8 @@ import type {
 } from "./types.js";
 
 /** Numeric encodings shared with native/src/convert.cc. */
+export const DOCUMENT_KIND_CODE = { pdf: 0, bitmap: 1 } as const;
+export const PIXEL_FORMAT_CODE: Record<BitmapPixelFormat, number> = { rgba: 0, bgra: 1 };
 export const SUBSET_CODE: Record<PageSubset, number> = { all: 0, odd: 1, even: 2 };
 export const SCALE_CODE: Record<ScaleMode, number> = {
   actual: 0,
@@ -296,8 +301,15 @@ function reject(resolved: ResolvedOptions, option: string, backend: BackendName,
  * Caller-supplied `ipp` entries are applied last so an explicit attribute always
  * wins over one this mapping derived, which is what makes the escape hatch
  * useful for queues with unusual vocabularies.
+ *
+ * @param documentKind Bitmap jobs skip PDF-only attributes (`page-ranges`,
+ *   `number-up`, …) and treat `dpi` as the intrinsic image resolution rather
+ *   than a Windows-only rasterisation knob.
  */
-export function toIppOptions(resolved: ResolvedOptions): Array<[string, string]> {
+export function toIppOptions(
+  resolved: ResolvedOptions,
+  documentKind: "pdf" | "bitmap" = "pdf",
+): Array<[string, string]> {
   const attributes = new Map<string, string>();
 
   if (resolved.copies > 1) {
@@ -309,13 +321,16 @@ export function toIppOptions(resolved: ResolvedOptions): Array<[string, string]>
         : "separate-documents-uncollated-copies",
     );
   }
-  if (resolved.ranges.length > 0) {
-    attributes.set("page-ranges", toIppPageRanges(resolved.ranges));
+  if (documentKind === "pdf") {
+    if (resolved.ranges.length > 0) {
+      attributes.set("page-ranges", toIppPageRanges(resolved.ranges));
+    }
+    if (resolved.subset !== "all") attributes.set("page-set", resolved.subset);
+    // CUPS' own attribute; the IPP standard equivalent, page-delivery, is not
+    // implemented by cupsd.
+    if (resolved.reverse) attributes.set("outputorder", "reverse");
+    if (resolved.numberUp > 1) attributes.set("number-up", String(resolved.numberUp));
   }
-  if (resolved.subset !== "all") attributes.set("page-set", resolved.subset);
-  // CUPS' own attribute; the IPP standard equivalent, page-delivery, is not
-  // implemented by cupsd.
-  if (resolved.reverse) attributes.set("outputorder", "reverse");
   if (resolved.duplex) attributes.set("sides", IPP_SIDES[resolved.duplex]);
   if (resolved.orientation) {
     attributes.set("orientation-requested", IPP_ORIENTATION[resolved.orientation]);
@@ -336,7 +351,6 @@ export function toIppOptions(resolved: ResolvedOptions): Array<[string, string]>
     attributes.set("print-color-mode", resolved.color);
   }
   if (resolved.quality) attributes.set("print-quality", IPP_QUALITY[resolved.quality]);
-  if (resolved.numberUp > 1) attributes.set("number-up", String(resolved.numberUp));
 
   switch (resolved.scale) {
     case "fit":
@@ -363,7 +377,7 @@ export function toIppOptions(resolved: ResolvedOptions): Array<[string, string]>
       break;
   }
 
-  if (resolved.dpi !== undefined) {
+  if (documentKind === "pdf" && resolved.dpi !== undefined) {
     reject(
       resolved,
       "dpi",
@@ -371,6 +385,12 @@ export function toIppOptions(resolved: ResolvedOptions): Array<[string, string]>
       "CUPS renders the PDF itself at the queue's resolution. Use `quality`, or pass " +
         "a driver-specific attribute through `ipp`.",
     );
+  }
+
+  if (documentKind === "bitmap") {
+    // Declaring the format up front keeps filters from sniffing the stream and
+    // guessing wrong when the BMP header is still in flight.
+    attributes.set("document-format", "image/bmp");
   }
 
   for (const [key, value] of Object.entries(resolved.ipp)) attributes.set(key, value);
@@ -468,8 +488,13 @@ export function toWindowsSettings(resolved: ResolvedOptions): WindowsSettings {
 export interface NativeRequest {
   printer: string;
   jobName: string;
+  /** `0` = PDF, `1` = raw bitmap. */
+  kind: number;
   filePath?: string;
   data?: Uint8Array;
+  bitmapWidth?: number;
+  bitmapHeight?: number;
+  pixelFormat?: number;
   copies: number;
   collate: boolean;
   ranges: Array<{ from: number; to: number }>;
@@ -505,6 +530,7 @@ export function buildNativeRequest(
   return {
     printer,
     jobName,
+    kind: DOCUMENT_KIND_CODE.pdf,
     ...(source.filePath !== undefined ? { filePath: source.filePath } : {}),
     ...(source.data !== undefined ? { data: source.data } : {}),
     copies: resolved.copies,
@@ -514,7 +540,137 @@ export function buildNativeRequest(
     reverse: resolved.reverse,
     scale: SCALE_CODE[resolved.scale],
     numberUp: resolved.numberUp,
-    ipp: isWindows ? [] : toIppOptions(resolved),
+    ipp: isWindows ? [] : toIppOptions(resolved, "pdf"),
     windows: isWindows ? toWindowsSettings(resolved) : inertWindowsSettings(resolved),
+  };
+}
+
+/**
+ * Validates and normalises options for {@link printBitmap}.
+ *
+ * Defaults `dpi` to 72 (one pixel ≈ one PostScript point) and rejects PDF-only
+ * knobs that TypeScript already omits from {@link BitmapPrintOptions}.
+ */
+export function resolveBitmapOptions(options: BitmapPrintOptions = {}): ResolvedOptions {
+  if (typeof options !== "object" || options === null) {
+    throw new InvalidOptionError("options", "expected an object");
+  }
+
+  const raw = options as PrintOptions & BitmapPrintOptions;
+  for (const option of ["pages", "pageSubset", "reverse", "numberUp"] as const) {
+    if (raw[option] !== undefined) {
+      throw new InvalidOptionError(
+        option,
+        "is not supported for bitmap printing; a bitmap is always a single page",
+      );
+    }
+  }
+  if (raw.windows?.renderMode !== undefined) {
+    throw new InvalidOptionError(
+      "windows.renderMode",
+      "is not supported for bitmap printing; pixels are always blitted as a DIB",
+    );
+  }
+  if (raw.windows?.printMode !== undefined) {
+    throw new InvalidOptionError(
+      "windows.printMode",
+      "is not supported for bitmap printing; there is no PDFium vector path for raw pixels",
+    );
+  }
+
+  const resolved = resolveOptions(options as PrintOptions);
+  return {
+    ...resolved,
+    // Intrinsic resolution for placement and for the BMP header CUPS receives.
+    dpi: resolved.dpi ?? 72,
+  };
+}
+
+/** Validates a {@link BitmapSource} and returns the normalised pixel buffer. */
+export function readBitmapSource(source: BitmapSource): {
+  data: Uint8Array;
+  width: number;
+  height: number;
+  format: BitmapPixelFormat;
+  defaultJobName: string;
+} {
+  if (typeof source !== "object" || source === null || Array.isArray(source)) {
+    throw new InvalidOptionError("source", "expected a { width, height, data } bitmap");
+  }
+
+  const width = source.width;
+  const height = source.height;
+  if (typeof width !== "number" || !Number.isInteger(width) || width < 1) {
+    throw new InvalidOptionError("source.width", `expected a positive integer, got ${String(width)}`);
+  }
+  if (typeof height !== "number" || !Number.isInteger(height) || height < 1) {
+    throw new InvalidOptionError(
+      "source.height",
+      `expected a positive integer, got ${String(height)}`,
+    );
+  }
+
+  const format: BitmapPixelFormat =
+    source.format === undefined
+      ? "rgba"
+      : requireOneOf("source.format", source.format, ["rgba", "bgra"] as const);
+
+  let data: Uint8Array;
+  if (source.data instanceof Uint8Array) {
+    data = source.data;
+  } else if (source.data instanceof ArrayBuffer) {
+    data = new Uint8Array(source.data);
+  } else {
+    throw new InvalidOptionError(
+      "source.data",
+      "expected a Buffer, Uint8Array or ArrayBuffer",
+    );
+  }
+
+  const expected = width * height * 4;
+  if (data.byteLength !== expected) {
+    throw new InvalidOptionError(
+      "source.data",
+      `expected ${expected} bytes for a ${width}×${height} ${format} bitmap, got ${data.byteLength}`,
+    );
+  }
+
+  return { data, width, height, format, defaultJobName: "print-it-now" };
+}
+
+/** Builds the native request for a raw bitmap job. */
+export function buildBitmapNativeRequest(
+  resolved: ResolvedOptions,
+  printer: string,
+  jobName: string,
+  bitmap: { data: Uint8Array; width: number; height: number; format: BitmapPixelFormat },
+  backend: BackendName,
+): NativeRequest {
+  const isWindows = backend === "windows";
+  const dpi = resolved.dpi ?? 72;
+
+  // CUPS needs the dpi for the BMP header even though DEVMODE mapping is a
+  // Windows concern, so the inert settings still carry it for bitmap jobs.
+  const windows = isWindows
+    ? toWindowsSettings(resolved)
+    : { ...inertWindowsSettings(resolved), dpi };
+
+  return {
+    printer,
+    jobName,
+    kind: DOCUMENT_KIND_CODE.bitmap,
+    data: bitmap.data,
+    bitmapWidth: bitmap.width,
+    bitmapHeight: bitmap.height,
+    pixelFormat: PIXEL_FORMAT_CODE[bitmap.format],
+    copies: resolved.copies,
+    collate: resolved.collate,
+    ranges: [],
+    subset: SUBSET_CODE.all,
+    reverse: false,
+    scale: SCALE_CODE[resolved.scale],
+    numberUp: 1,
+    ipp: isWindows ? [] : toIppOptions(resolved, "bitmap"),
+    windows,
   };
 }

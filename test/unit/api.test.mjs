@@ -16,6 +16,7 @@ import {
   listJobs,
   listPrinters,
   parsePageRanges,
+  printBitmap,
   printPdf,
 } from "../../dist/index.js";
 import { makePdf } from "../helpers/pdf.mjs";
@@ -24,6 +25,7 @@ describe("public surface", () => {
   it("exports the documented functions", () => {
     for (const fn of [
       printPdf,
+      printBitmap,
       listPrinters,
       getJob,
       listJobs,

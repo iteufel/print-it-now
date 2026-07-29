@@ -4,6 +4,7 @@
 #include <cmath>
 #include <vector>
 
+#include "bitmap.h"
 #include "win_util.h"
 
 namespace pin {
@@ -12,13 +13,13 @@ namespace {
 
 // Annotations are included because a filled-in form or a stamped approval is
 // almost always meant to appear on paper; FPDF_PRINTING selects PDFium's
-// print-oriented rendering, which is the flag that makes it honour "print" 
+// print-oriented rendering, which is the flag that makes it honour "print"
 // appearance streams and skip screen-only optimisations.
 constexpr int kRenderFlags = FPDF_PRINTING | FPDF_ANNOT;
 
-// Cap on how much of a page is rasterised at once. A 600 dpi A3 page is roughly
-// 190 MB as 32bpp BGRA, which is not something to allocate in one go inside a
-// server process, so tall pages are rendered as horizontal bands.
+// Cap on how much of a page is rasterised or blitted at once. A 600 dpi A3 page
+// is roughly 190 MB as 32bpp BGRA, which is not something to allocate in one go
+// inside a server process, so tall pages are handled as horizontal bands.
 constexpr size_t kMaxBandBytes = 16u * 1024u * 1024u;
 
 int ScaleEdge(int edge, int from, int to) {
@@ -158,6 +159,73 @@ Status RenderPage(const pdfium::Library& pdfium,
     return RenderBitmap(pdfium, dc, page, placement, sheet, requested_dpi);
   }
   return RenderVector(pdfium, dc, page, placement);
+}
+
+Status BlitBgrx(HDC dc,
+                const Placement& placement,
+                int width,
+                int height,
+                const uint8_t* pixels,
+                size_t stride) {
+  if (placement.width <= 0 || placement.height <= 0) {
+    return Status::Error(code::kBackend, "Bitmap placement has a zero or negative size");
+  }
+  if (width < 1 || height < 1) {
+    return Status::Error(code::kBackend, "Bitmap dimensions must be positive");
+  }
+
+  const int band_rows = static_cast<int>(
+      std::max<size_t>(1, std::min<size_t>(static_cast<size_t>(height),
+                                           kMaxBandBytes / std::max<size_t>(stride, 1))));
+
+  BITMAPINFO info{};
+  info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  info.bmiHeader.biWidth = width;
+  info.bmiHeader.biPlanes = 1;
+  info.bmiHeader.biBitCount = 32;
+  info.bmiHeader.biCompression = BI_RGB;
+
+  const int previous_mode = SetStretchBltMode(dc, HALFTONE);
+  SetBrushOrgEx(dc, 0, 0, nullptr);
+
+  Status status = Status::Ok();
+  for (int top = 0; top < height; top += band_rows) {
+    const int rows = std::min(band_rows, height - top);
+    const int destination_top = ScaleEdge(top, height, placement.height);
+    const int destination_bottom = ScaleEdge(top + rows, height, placement.height);
+    const int destination_rows = std::max(1, destination_bottom - destination_top);
+
+    // Negative height marks the DIB as top-down, matching the source row order.
+    info.bmiHeader.biHeight = -rows;
+
+    if (StretchDIBits(dc, placement.x, placement.y + destination_top, placement.width,
+                      destination_rows, 0, 0, width, rows,
+                      pixels + static_cast<size_t>(top) * stride, &info, DIB_RGB_COLORS,
+                      SRCCOPY) == static_cast<int>(GDI_ERROR)) {
+      const DWORD error = GetLastError();
+      status = Status::Error(code::kBackend,
+                            "The printer driver rejected a bitmap band: " +
+                                FormatLastError(error),
+                            static_cast<int>(error), FormatLastError(error));
+      break;
+    }
+  }
+
+  if (previous_mode != 0) SetStretchBltMode(dc, previous_mode);
+  return status;
+}
+
+Status RenderRawBitmap(HDC dc,
+                       const Placement& placement,
+                       PixelFormat format,
+                       int width,
+                       int height,
+                       const uint8_t* data,
+                       size_t data_length) {
+  std::vector<uint8_t> bgrx;
+  PIN_RETURN_IF_ERROR(bitmap::ToBgrx(format, width, height, data, data_length, &bgrx));
+  return BlitBgrx(dc, placement, width, height, bgrx.data(),
+                  static_cast<size_t>(width) * 4u);
 }
 
 }  // namespace win

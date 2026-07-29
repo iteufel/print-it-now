@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "backend.h"
+#include "bitmap.h"
 #include "cups_dynamic.h"
 #include "status.h"
 
@@ -297,19 +298,41 @@ Status Print(const PrintRequest& request, PrintResult* out) {
         *cups, "CUPS rejected the job for printer \"" + request.printer + "\"");
   }
 
+  std::vector<uint8_t> bmp;
+  const char* format = cups::kFormatPdf;
+  const uint8_t* payload = request.data;
+  size_t payload_length = request.data_length;
+  bool payload_is_file = request.data == nullptr;
+
+  if (request.kind == DocumentKind::kBitmap) {
+    status = bitmap::EncodeBmp(request.pixel_format, request.bitmap_width,
+                               request.bitmap_height, request.data, request.data_length,
+                               request.windows.dpi, &bmp);
+    if (!status.ok()) {
+      cups->CancelJob2(nullptr, resolved.name, job_id, 0);
+      return status;
+    }
+    format = cups::kFormatBmp;
+    payload = bmp.data();
+    payload_length = bmp.size();
+    payload_is_file = false;
+  }
+
   const std::string document_name =
-      request.job_name.empty() ? std::string("document.pdf") : request.job_name;
-  if (cups->StartDocument(nullptr, resolved.name, job_id, document_name.c_str(),
-                          cups::kFormatPdf, 1) != cups::kHttpContinue) {
+      request.job_name.empty()
+          ? (request.kind == DocumentKind::kBitmap ? std::string("document.bmp")
+                                                   : std::string("document.pdf"))
+          : request.job_name;
+  if (cups->StartDocument(nullptr, resolved.name, job_id, document_name.c_str(), format, 1) !=
+      cups::kHttpContinue) {
     Status failure = cups::LastErrorStatus(*cups, "CUPS refused the document");
     cups->CancelJob2(nullptr, resolved.name, job_id, 0);
     return failure;
   }
 
-  status = request.data != nullptr
-               ? WriteAll(*cups, reinterpret_cast<const char*>(request.data),
-                          request.data_length)
-               : StreamFile(*cups, request.file_path);
+  status = payload_is_file ? StreamFile(*cups, request.file_path)
+                           : WriteAll(*cups, reinterpret_cast<const char*>(payload),
+                                      payload_length);
 
   // FinishDocument has to run even after a write failure: it is what closes out
   // the IPP request. Cancelling afterwards keeps a half-sent document from
@@ -326,8 +349,10 @@ Status Print(const PrintRequest& request, PrintResult* out) {
   out->job_id = job_id;
   out->printer = request.printer;
   out->job_name = request.job_name;
-  // Deliberately left unset: CUPS expands `page-ranges` server-side, so the
-  // number of sheets is not knowable here without parsing the PDF ourselves.
+  // Bitmaps are always a single sheet. PDF page counts are left unset: CUPS
+  // expands `page-ranges` server-side, so the number of sheets is not knowable
+  // here without parsing the PDF ourselves.
+  if (request.kind == DocumentKind::kBitmap) out->page_count = 1;
   return Status::Ok();
 }
 

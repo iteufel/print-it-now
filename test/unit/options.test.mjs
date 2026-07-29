@@ -336,10 +336,12 @@ describe("buildNativeRequest", () => {
   it("only builds the active backend's half", () => {
     const cups = buildNativeRequest(resolveOptions({ copies: 2 }), "Q", "T", source, "cups");
     assert.ok(cups.ipp.length > 0, "CUPS gets IPP attributes");
+    assert.equal(cups.kind, 0);
 
     const win = buildNativeRequest(resolveOptions({ copies: 2 }), "Q", "T", source, "windows");
     assert.deepEqual(win.ipp, [], "Windows gets none");
     assert.equal(win.windows.collate, 1);
+    assert.equal(win.kind, 0);
   });
 
   it("does not report an option as unsupported when the active backend supports it", () => {

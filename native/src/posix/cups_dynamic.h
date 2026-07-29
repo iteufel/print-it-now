@@ -55,6 +55,7 @@ struct Job {
 };
 
 inline constexpr const char* kFormatPdf = "application/pdf";
+inline constexpr const char* kFormatBmp = "image/bmp";
 
 // ipp_jstate_t
 inline constexpr int kJobPending = 3;

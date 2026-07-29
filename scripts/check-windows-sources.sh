@@ -36,6 +36,7 @@ fi
   -I "$ROOT/native/src" \
   -I "$ROOT/native/src/win" \
   -I "$ROOT/native/third_party/pdfium/include" \
+  "$ROOT"/native/src/bitmap.cc \
   "$ROOT"/native/src/win/*.cc
 
 printf 'Windows sources compile cleanly with %s\n' "$CXX"
