@@ -4,14 +4,13 @@ name: Prebuild
 # toolchain. prebuildify lays them out as prebuilds/<platform>-<arch>/, which is
 # the layout node-gyp-build looks in -- and the one Bun understands too.
 #
-# Run this before publishing: download every artifact into prebuilds/, then
-# `npm publish`. A dry run on a pull request is available through
-# workflow_dispatch.
+# On a GitHub Release, the collected tarball is published to npm. workflow_dispatch
+# is a dry run: it builds and packs, but does not publish.
 
 on:
   workflow_dispatch:
   release:
-    types: [created]
+    types: [published]
 
 jobs:
   prebuild:
@@ -168,10 +167,64 @@ jobs:
       - run: npm run build:ts
 
       - name: Build the publishable tarball
-        run: npm pack
+        run: npm pack --dry-run && npm pack
 
       - uses: actions/upload-artifact@v4
         with:
           name: npm-tarball
           path: "*.tgz"
           if-no-files-found: error
+
+  publish:
+    name: Publish to npm
+    needs: collect
+    # workflow_dispatch is intentionally a dry run of the prebuild matrix.
+    if: github.event_name == 'release'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # Required for npm Trusted Publishing / --provenance (OIDC).
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-tarball
+          path: .
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Check the release tag matches package.json
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          tag="${{ github.event.release.tag_name }}"
+          if [ "$tag" != "$expected" ]; then
+            echo "::error::release tag '$tag' does not match package.json (expected '$expected')"
+            exit 1
+          fi
+
+      - name: Publish the packed tarball
+        run: |
+          shopt -s nullglob
+          tarballs=(*.tgz)
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one npm tarball, found: ${tarballs[*]:-none}"
+            exit 1
+          fi
+          echo "Publishing ${tarballs[0]}"
+          # Prefer Trusted Publishing (OIDC). If that is not configured yet, set
+          # the repository secret NPM_TOKEN to an npm automation token instead.
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            npm publish "${tarballs[0]}" --access public --provenance
+          else
+            # Empty _authToken from setup-node breaks OIDC; drop it so npm can
+            # exchange the Actions identity token with the registry.
+            npm config delete "//registry.npmjs.org/:_authToken" || true
+            npm publish "${tarballs[0]}" --access public --provenance
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
