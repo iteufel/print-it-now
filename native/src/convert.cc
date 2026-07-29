@@ -259,6 +259,14 @@ Napi::Value ToJs(Napi::Env env, const JobInfo& job) {
   return out;
 }
 
+Napi::Value ToJs(Napi::Env env, const std::vector<JobInfo>& jobs) {
+  Napi::Array out = Napi::Array::New(env, jobs.size());
+  for (size_t i = 0; i < jobs.size(); ++i) {
+    out.Set(static_cast<uint32_t>(i), ToJs(env, jobs[i]));
+  }
+  return out;
+}
+
 Napi::Value ToJs(Napi::Env env, const BackendInfo& info) {
   Napi::Object out = Napi::Object::New(env);
   out.Set("backend", Napi::String::New(env, info.backend));

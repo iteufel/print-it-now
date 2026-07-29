@@ -82,6 +82,21 @@ class GetJobWorker final : public BackendWorker<JobLookup> {
   int job_id_;
 };
 
+class ListJobsWorker final : public BackendWorker<std::vector<JobInfo>> {
+ public:
+  ListJobsWorker(Napi::Env env, std::string printer)
+      : BackendWorker(env), printer_(std::move(printer)) {}
+
+ protected:
+  Status Run(std::vector<JobInfo>* out) override { return backend::ListJobs(printer_, out); }
+  Napi::Value Convert(Napi::Env env, const std::vector<JobInfo>& result) override {
+    return ToJs(env, result);
+  }
+
+ private:
+  std::string printer_;
+};
+
 class CancelJobWorker final : public BackendWorker<Empty> {
  public:
   CancelJobWorker(Napi::Env env, std::string printer, int job_id)
@@ -119,6 +134,14 @@ Status ReadPrinterAndJob(const Napi::CallbackInfo& info, std::string* printer, i
   }
   *printer = info[0].As<Napi::String>().Utf8Value();
   *job_id = info[1].As<Napi::Number>().Int32Value();
+  return Status::Ok();
+}
+
+Status ReadPrinter(const Napi::CallbackInfo& info, std::string* printer) {
+  if (info.Length() < 1 || !info[0].IsString()) {
+    return Status::Error(code::kBackend, "Internal error: expected (printer: string)");
+  }
+  *printer = info[0].As<Napi::String>().Utf8Value();
   return Status::Ok();
 }
 
@@ -164,6 +187,14 @@ Napi::Value StartGetJob(const Napi::CallbackInfo& info) {
   Status status = ReadPrinterAndJob(info, &printer, &job_id);
   if (!status.ok()) return RejectWith(env, status);
   return Queue<GetJobWorker>(env, std::move(printer), job_id);
+}
+
+Napi::Value StartListJobs(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::string printer;
+  Status status = ReadPrinter(info, &printer);
+  if (!status.ok()) return RejectWith(env, status);
+  return Queue<ListJobsWorker>(env, std::move(printer));
 }
 
 Napi::Value StartCancelJob(const Napi::CallbackInfo& info) {

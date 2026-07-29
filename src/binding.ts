@@ -19,6 +19,9 @@ export interface NativeAddon {
     printer: string,
     jobId: number,
   ): Promise<(Omit<JobStatus, "createdAt"> & { createdAt?: number }) | null>;
+  listJobs(
+    printer: string,
+  ): Promise<Array<Omit<JobStatus, "createdAt"> & { createdAt?: number }>>;
   cancelJob(printer: string, jobId: number): Promise<void>;
 
   /** Test-only hooks; see native/src/addon.cc. */

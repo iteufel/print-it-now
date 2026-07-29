@@ -8,6 +8,7 @@ import {
   cancelJob,
   getBackendInfo,
   getJob,
+  listJobs,
   listPrinters,
   printPdf,
 } from "../../dist/index.js";
@@ -313,8 +314,36 @@ describe("end-to-end printing", { skip }, () => {
     }
   });
 
+  it("lists jobs in a printer's queue", { skip: needsJobStatus }, async () => {
+    const job = await printPdf(makePdf({ pages: 1 }), {
+      printer,
+      jobName: "e2e-list-jobs",
+      ...(isWindows ? { windows: { outputFile: join(workDir, "list-jobs.pdf") } } : {}),
+    });
+
+    const jobs = await listJobs(printer);
+    assert.ok(Array.isArray(jobs));
+    // The job may already have left the queue; if it is still there, it must
+    // round-trip with a recognisable state.
+    const match = jobs.find((entry) => entry.jobId === job.jobId);
+    if (match !== undefined) {
+      assert.equal(match.jobName, "e2e-list-jobs");
+      assert.ok(
+        ["pending", "held", "processing", "stopped", "completed", "unknown"].includes(
+          match.state,
+        ),
+        `unexpected state ${match.state}`,
+      );
+    }
+  });
+
   it("reports null for a job id that was never issued", { skip: needsJobStatus }, async () => {
     assert.equal(await getJob(printer, 999_999), null);
+  });
+
+  it("returns an array when listing jobs", { skip: needsJobStatus }, async () => {
+    const jobs = await listJobs(printer);
+    assert.ok(Array.isArray(jobs));
   });
 
   it("says so plainly when the fallback cannot report job status", {
@@ -323,6 +352,7 @@ describe("end-to-end printing", { skip }, () => {
     // Refusing is the honest answer here: the command line tools report state as
     // localised prose, and guessing at it would be worse than saying no.
     await assert.rejects(getJob(printer, 1), { code: "EBACKENDUNAVAILABLE" });
+    await assert.rejects(listJobs(printer), { code: "EBACKENDUNAVAILABLE" });
   });
 
   it("rejects printing to a queue that does not exist", async () => {

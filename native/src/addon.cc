@@ -117,6 +117,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("defaultPrinter", Napi::Function::New(env, pin::StartDefaultPrinter));
   exports.Set("print", Napi::Function::New(env, pin::StartPrint));
   exports.Set("getJob", Napi::Function::New(env, pin::StartGetJob));
+  exports.Set("listJobs", Napi::Function::New(env, pin::StartListJobs));
   exports.Set("cancelJob", Napi::Function::New(env, pin::StartCancelJob));
   exports.Set("_expandPageSelection", Napi::Function::New(env, ExpandPageSelection));
   exports.Set("_computePlacement", Napi::Function::New(env, ComputePlacement));

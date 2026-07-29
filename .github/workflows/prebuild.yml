@@ -65,7 +65,7 @@ jobs:
           node -e "
             const load = require('node-gyp-build');
             const addon = load(process.cwd());
-            for (const name of ['print', 'listPrinters', 'describe', 'cancelJob']) {
+            for (const name of ['print', 'listPrinters', 'describe', 'cancelJob', 'listJobs']) {
               if (typeof addon[name] !== 'function') {
                 throw new Error('the prebuilt addon is missing ' + name);
               }
