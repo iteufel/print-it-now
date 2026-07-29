@@ -193,9 +193,12 @@ jobs:
           name: npm-tarball
           path: .
 
+      # Trusted Publishing needs npm >= 11.5.1. Node 22 ships an older CLI that
+      # never attempts OIDC and fails with ENEEDAUTH even when a publisher is
+      # configured. Node 24 bundles a new enough npm.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
       - name: Check the release tag matches package.json
@@ -208,6 +211,10 @@ jobs:
           fi
 
       - name: Publish the packed tarball
+        env:
+          # Only used on the automation-token fallback path below. Must not be
+          # present during the OIDC attempt — an empty value still disables it.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           shopt -s nullglob
           tarballs=(*.tgz)
@@ -215,26 +222,36 @@ jobs:
             echo "::error::expected exactly one npm tarball, found: ${tarballs[*]:-none}"
             exit 1
           fi
-          echo "Publishing ${tarballs[0]}"
-          # Prefer Trusted Publishing (OIDC). If that is not configured yet, set
-          # the repository secret NPM_TOKEN to an npm *automation* token. Classic
-          # or granular publish tokens with 2FA fail here with EOTP -- CI has no
-          # one-time password.
-          set +e
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            out=$(npm publish "${tarballs[0]}" --access public --provenance 2>&1)
-            status=$?
-          else
-            npm config delete "//registry.npmjs.org/:_authToken" || true
-            out=$(npm publish "${tarballs[0]}" --access public --provenance 2>&1)
-            status=$?
+          echo "Publishing ${tarballs[0]} with npm $(npm --version)"
+
+          # setup-node with registry-url writes _authToken into ~/.npmrc. Any
+          # _authToken line (even empty) makes npm skip Trusted Publishing.
+          NPMRC="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          if [ -f "$NPMRC" ]; then
+            sed -i '/_authToken/d' "$NPMRC"
           fi
+          unset NODE_AUTH_TOKEN
+
+          set +e
+          out=$(npm publish "${tarballs[0]}" --access public --provenance 2>&1)
+          status=$?
           printf '%s\n' "$out"
-          if [ "$status" -ne 0 ]; then
-            if printf '%s\n' "$out" | grep -q 'EOTP'; then
-              echo "::error::NPM_TOKEN must be an npm Automation token (not a classic or granular publish token). Tokens that require 2FA OTP cannot publish from CI. Create one at https://www.npmjs.com/settings/~/tokens and update the NPM_TOKEN repository secret, or configure Trusted Publishing for workflow prebuild.yml instead."
-            fi
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "::error::Trusted Publishing failed (see npm output above). Confirm the npm Trusted Publisher matches repo iteufel/print-it-now and workflow filename prebuild.yml, or set NPM_TOKEN to an Automation token."
             exit "$status"
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+          echo "OIDC publish did not succeed; retrying with NPM_TOKEN"
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$HOME/.npmrc"
+          export NODE_AUTH_TOKEN="$NPM_TOKEN"
+          out=$(npm publish "${tarballs[0]}" --access public --provenance 2>&1)
+          status=$?
+          printf '%s\n' "$out"
+          if [ "$status" -ne 0 ] && printf '%s\n' "$out" | grep -q 'EOTP'; then
+            echo "::error::NPM_TOKEN must be an npm Automation token (not a classic or granular publish token). Tokens that require 2FA OTP cannot publish from CI."
+          fi
+          exit "$status"
