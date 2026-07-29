@@ -442,10 +442,12 @@ Configure **one** of the following on the GitHub repository:
 | Workflow filename | `prebuild.yml` |
 | Environment | _(leave empty)_ |
 
-No long-lived token is stored. The workflow requests `id-token: write` and
-publishes with `--provenance`. For a brand-new package name that does not exist
-on the registry yet, publish once with an automation token (below), then switch
-to Trusted Publishing.
+No long-lived token is stored. The workflow requests `id-token: write`, runs
+Node 24 (npm ≥ 11.5.1 is required for OIDC), and publishes with `--provenance`.
+For a brand-new package name that does not exist on the registry yet, publish
+once with an automation token (below), then switch to Trusted Publishing — or
+configure the trusted publisher before the first release.
+
 
 **Automation token (fallback).** Create an npm
 [**automation** token](https://docs.npmjs.com/creating-and-viewing-access-tokens)
