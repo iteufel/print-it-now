@@ -23,14 +23,18 @@ export const OPEN_ENDED = 0;
  * natively against the real page count, where it can also be clamped.
  */
 export function parsePageRanges(expression: string): PageRange[] {
-  const trimmed = expression.trim();
-  if (trimmed === "") {
+  if (typeof expression !== "string") {
+    throw new InvalidOptionError("pages", "expected a range expression such as \"1-3,5,8-\"");
+  }
+  // Whitespace is stripped wholesale rather than only around commas, so that
+  // "1 - 3, 5" parses the same as "1-3,5".
+  const compact = expression.replace(/\s+/g, "");
+  if (compact === "") {
     throw new InvalidOptionError("pages", "the range expression is empty");
   }
 
   const ranges: PageRange[] = [];
-  for (const rawPart of trimmed.split(",")) {
-    const part = rawPart.trim();
+  for (const part of compact.split(",")) {
     if (part === "") {
       throw new InvalidOptionError(
         "pages",

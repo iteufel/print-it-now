@@ -5,6 +5,8 @@
  * cases (page ranges, scaling, landscape media) actually vary.
  */
 
+import { inflateSync } from "node:zlib";
+
 const LETTER = { width: 612, height: 792 };
 
 function escapeText(text) {
@@ -92,10 +94,53 @@ export function makePdf(options = {}) {
   return Buffer.concat(chunks);
 }
 
-/** Counts `/Type /Page` entries, for asserting on printed output. */
+/**
+ * Counts the pages in a PDF produced by a printer driver.
+ *
+ * The page tree normally sits in plain text, but PDF 1.5 lets a writer pack
+ * object dictionaries into compressed object streams -- which Windows' "Microsoft
+ * Print to PDF" driver does -- and then nothing is visible without inflating
+ * them. Both cases are handled so the end-to-end assertions mean the same thing
+ * on every platform.
+ */
 export function countPdfPages(buffer) {
+  const direct = countInText(buffer.toString("latin1"));
+  if (direct > 0) return direct;
+
+  for (const inflated of inflateObjectStreams(buffer)) {
+    const count = countInText(inflated);
+    if (count > 0) return count;
+  }
+  return 0;
+}
+
+function countInText(text) {
+  // The root page tree's /Count is authoritative. Anchoring on /Type /Pages
+  // avoids matching the /Count of an outline or an unrelated dictionary.
+  const pagesDict = /\/Type\s*\/Pages\b[^>]*?\/Count\s+(\d+)/s.exec(text);
+  if (pagesDict) return Number(pagesDict[1]);
+  const countBeforeType = /\/Count\s+(\d+)[^>]*?\/Type\s*\/Pages\b/s.exec(text);
+  if (countBeforeType) return Number(countBeforeType[1]);
+  // Fall back to counting leaves. The negative lookahead keeps /Type /Pages from
+  // being counted as a page.
+  return (text.match(/\/Type\s*\/Page(?![a-zA-Z])/g) ?? []).length;
+}
+
+function inflateObjectStreams(buffer) {
+  const results = [];
   const text = buffer.toString("latin1");
-  const declared = /\/Count\s+(\d+)/.exec(text);
-  if (declared) return Number(declared[1]);
-  return (text.match(/\/Type\s*\/Page[^s]/g) ?? []).length;
+  const streamPattern = /stream\r?\n/g;
+
+  let match;
+  while ((match = streamPattern.exec(text)) !== null) {
+    const start = match.index + match[0].length;
+    const end = text.indexOf("endstream", start);
+    if (end === -1) continue;
+    try {
+      results.push(inflateSync(buffer.subarray(start, end)).toString("latin1"));
+    } catch {
+      // Not a Flate stream, or an image: nothing to read here.
+    }
+  }
+  return results;
 }

@@ -1,11 +1,14 @@
+import { open, type FileHandle } from "node:fs/promises";
 import { basename } from "node:path";
 
 import { getBackend } from "./backend.js";
 import {
   BackendUnavailableError,
   InvalidOptionError,
+  InvalidPdfError,
   JobNotFoundError,
   NoPrinterError,
+  PrintError,
   fromNativeError,
 } from "./errors.js";
 import * as lp from "./fallback/lp.js";
@@ -80,17 +83,69 @@ export async function getDefaultPrinter(): Promise<Printer | null> {
   );
 }
 
-function readSource(source: PdfSource): {
+/**
+ * Bytes a PDF must start with. The specification allows leading junk, and
+ * readers are expected to tolerate it, so the marker is searched for within the
+ * first kilobyte rather than required at offset zero.
+ */
+const PDF_HEADER = "%PDF-";
+const PDF_HEADER_SEARCH_BYTES = 1024;
+
+/**
+ * Checks the file really looks like a PDF.
+ *
+ * Worth doing in JS even though both backends would eventually notice, because
+ * they notice at different times: PDFium fails synchronously on Windows, while
+ * CUPS trusts the document format the client declares and only aborts the job
+ * later, during filtering. Without this check, printing an HTML error page that
+ * a download silently produced would look like a success on Linux and a failure
+ * on Windows.
+ */
+function assertLooksLikePdf(head: Uint8Array, describe: string): void {
+  const text = Buffer.from(
+    head.subarray(0, Math.min(head.byteLength, PDF_HEADER_SEARCH_BYTES)),
+  ).toString("latin1");
+  if (text.includes(PDF_HEADER)) return;
+  throw new InvalidPdfError(
+    `${describe} does not look like a PDF: no "${PDF_HEADER}" marker in the first ` +
+      `${PDF_HEADER_SEARCH_BYTES} bytes. This package prints PDF only; convert other ` +
+      "formats first.",
+  );
+}
+
+async function readSource(source: PdfSource): Promise<{
   filePath?: string;
   data?: Uint8Array;
   defaultJobName: string;
-} {
+}> {
   if (typeof source === "string") {
     if (source.trim() === "") {
       throw new InvalidOptionError("source", "the file path is empty");
     }
-    // Passing the path down rather than reading it here lets the backend stream
-    // the file, so a large PDF never has to sit in the JS heap.
+
+    // Only the header is read here. Passing the path down rather than the bytes
+    // lets the backend stream the file, so a large PDF never has to sit in the
+    // JS heap.
+    let handle: FileHandle | undefined;
+    try {
+      handle = await open(source, "r");
+      const head = Buffer.alloc(PDF_HEADER_SEARCH_BYTES);
+      const { bytesRead } = await handle.read(head, 0, head.length, 0);
+      if (bytesRead === 0) {
+        throw new InvalidPdfError(`"${source}" is empty`);
+      }
+      assertLooksLikePdf(head.subarray(0, bytesRead), `"${source}"`);
+    } catch (error) {
+      if (error instanceof PrintError) throw error;
+      const errno = error as NodeJS.ErrnoException;
+      if (errno.code === "ENOENT") {
+        throw new InvalidPdfError(`"${source}" does not exist`, { cause: error });
+      }
+      throw new InvalidPdfError(`Could not read "${source}": ${errno.message}`, { cause: error });
+    } finally {
+      await handle?.close();
+    }
+
     return { filePath: source, defaultJobName: basename(source) };
   }
 
@@ -109,6 +164,7 @@ function readSource(source: PdfSource): {
   if (data.byteLength === 0) {
     throw new InvalidOptionError("source", "the PDF data is empty");
   }
+  assertLooksLikePdf(data, "the supplied data");
   return { data, defaultJobName: "print-it-now" };
 }
 
@@ -134,7 +190,7 @@ async function resolvePrinter(requested: string | undefined): Promise<string> {
  */
 export async function printPdf(source: PdfSource, options: PrintOptions = {}): Promise<PrintJob> {
   const resolved = resolveOptions(options);
-  const { filePath, data, defaultJobName } = readSource(source);
+  const { filePath, data, defaultJobName } = await readSource(source);
   const backend = await getBackend();
   const printer = await resolvePrinter(resolved.printer);
   const jobName = resolved.jobName ?? defaultJobName;
