@@ -52,7 +52,6 @@ jobs:
         include:
           - { os: ubuntu-24.04, label: Linux x64, node: 22 }
           - { os: ubuntu-24.04-arm, label: Linux arm64, node: 22 }
-          - { os: ubuntu-24.04, label: Linux x64 (Node 18), node: 18 }
           - { os: macos-15, label: macOS arm64, node: 22 }
           - { os: macos-13, label: macOS x64, node: 22 }
           - { os: windows-2022, label: Windows x64, node: 22 }
@@ -108,6 +107,44 @@ jobs:
 
       - name: Report the resolved backend
         run: node dist/cli.js backend --json
+
+  oldest-node:
+    name: Prebuilt addon on Node 18
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Built with a current Node because node-gyp needs Node 20 or newer, then
+      # run on Node 18. That is exactly what a Node 18 user gets: they install a
+      # prebuilt N-API binary rather than compiling one, so this checks the thing
+      # that actually ships against the oldest runtime the package claims to
+      # support.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run prebuild
+      - run: npm run build:ts
+
+      - name: Remove the source build, leaving only the prebuilt binary
+        run: rm -rf build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Confirm the runtime really is Node 18
+        run: |
+          node --version
+          case "$(node --version)" in
+            v18.*) ;;
+            *) echo "::error::expected Node 18, got $(node --version)"; exit 1 ;;
+          esac
+
+      - run: bash scripts/setup-test-printer.sh PrintItNowTest >> "$GITHUB_ENV"
+      - run: npm run test:unit
+      - run: npm run test:e2e
 
   test-windows-bitmap:
     name: Test on Windows x64 (bitmap render mode)
