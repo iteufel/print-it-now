@@ -1,0 +1,94 @@
+{
+  "name": "print-it-now",
+  "version": "0.1.0",
+  "description": "Headless PDF printing for Node.js and Bun on Windows, macOS and Linux. PDFium + winspool on Windows, CUPS everywhere else.",
+  "license": "MIT",
+  "author": "iteufel",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iteufel/print-it-now.git"
+  },
+  "bugs": {
+    "url": "https://github.com/iteufel/print-it-now/issues"
+  },
+  "homepage": "https://github.com/iteufel/print-it-now#readme",
+  "keywords": [
+    "pdf",
+    "print",
+    "printer",
+    "printing",
+    "headless",
+    "silent",
+    "pdfium",
+    "cups",
+    "winspool",
+    "napi",
+    "node-api",
+    "bun",
+    "windows",
+    "macos",
+    "linux"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "print-it-now": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "files": [
+    "dist/",
+    "native/",
+    "prebuilds/",
+    "scripts/fetch-pdfium.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "install": "node-gyp-build",
+    "build": "npm run build:native && npm run build:ts",
+    "build:ts": "tsup",
+    "build:native": "node-gyp rebuild",
+    "build:native:debug": "node-gyp rebuild --debug",
+    "configure": "node-gyp configure",
+    "fetch-pdfium": "node scripts/fetch-pdfium.mjs",
+    "prebuild": "prebuildify --napi --strip --tag-libc",
+    "test": "npm run test:unit",
+    "test:unit": "node --test test/unit/",
+    "test:e2e": "node --test test/e2e/",
+    "test:all": "node --test test/unit/ test/e2e/",
+    "test:bun": "bun test/smoke/bun-smoke.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "npm run typecheck",
+    "prepack": "npm run build:ts"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.5.0",
+    "node-gyp-build": "^4.8.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "node-gyp": "^13.0.1",
+    "prebuildify": "^6.0.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
+  },
+  "gypfile": true,
+  "publishConfig": {
+    "access": "public"
+  }
+}

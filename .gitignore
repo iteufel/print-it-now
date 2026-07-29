@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+prebuilds/
+*.tsbuildup
+*.tgz
+*.log
+
+# Downloaded PDFium runtime + staging area for scripts/fetch-pdfium.mjs
+native/third_party/pdfium/lib/
+native/third_party/pdfium/.cache/
+
+# Local end-to-end test scratch space
+test/.tmp/
+.DS_Store
