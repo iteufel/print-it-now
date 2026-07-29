@@ -7,8 +7,7 @@ export type PrintErrorCode =
   | "EINVALIDPDF"
   | "EBACKEND"
   | "EBACKENDUNAVAILABLE"
-  | "EJOBNOTFOUND"
-  | "ECANCELED";
+  | "EJOBNOTFOUND";
 
 export class PrintError extends Error {
   readonly code: PrintErrorCode;
