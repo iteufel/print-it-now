@@ -40,38 +40,91 @@ export interface NativeAddon {
   ): { x: number; y: number; width: number; height: number; rotate: number };
 }
 
+/**
+ * Shared with `src/platform/*.ts` via `Symbol.for`. A Bun `--compile` build
+ * inlines this module into the executable, so a module-local `let cached`
+ * would be a different slot from the platform entry that `require`d the
+ * `.node` file. The well-known symbol is the one place both sides can meet.
+ */
+const NATIVE_ADDON = Symbol.for("print-it-now.nativeAddon");
+const NATIVE_LOAD_FAILURE = Symbol.for("print-it-now.nativeLoadFailure");
+
+type NativeSlot = NativeAddon | Error | undefined;
+
+function readSlot(key: symbol): NativeSlot {
+  return (globalThis as Record<symbol, NativeSlot>)[key];
+}
+
+function writeSlot(key: symbol, value: NativeSlot): void {
+  (globalThis as Record<symbol, NativeSlot>)[key] = value;
+}
+
+function clearSlot(key: symbol): void {
+  delete (globalThis as Record<symbol, NativeSlot>)[key];
+}
+
+function isBunStandaloneExecutable(): boolean {
+  const bun = (globalThis as { Bun?: { isStandaloneExecutable?: boolean } }).Bun;
+  return bun?.isStandaloneExecutable === true;
+}
+
 // tsup's `shims` option gives both the ESM and the CJS build a working
 // `__dirname`, so the same source locates the addon in either module system.
 const require_ = createRequire(join(__dirname, "index.js"));
 
-let cached: NativeAddon | undefined;
-let loadFailure: Error | undefined;
+/**
+ * Stores an already-loaded addon so {@link loadNative} does not search again.
+ *
+ * Used by the `print-it-now/platform/*` entries, which `require` the `.node`
+ * file with a string literal so `bun build --compile` can embed it. Also
+ * used by tests to inject a fake addon.
+ */
+export function registerNative(addon: NativeAddon): void {
+  writeSlot(NATIVE_ADDON, addon);
+  clearSlot(NATIVE_LOAD_FAILURE);
+}
+
+/** Clears a loaded addon and a remembered load failure. For tests. */
+export function resetNativeCache(): void {
+  clearSlot(NATIVE_ADDON);
+  clearSlot(NATIVE_LOAD_FAILURE);
+}
 
 /**
  * Loads the native addon, preferring a prebuilt binary.
  *
- * `node-gyp-build` resolves `prebuilds/<platform>-<arch>/` first and falls back
- * to a local `build/Release` from a source build, which is also the layout Bun
- * understands.
+ * A `print-it-now/platform/*` import that already `require`d the `.node` file
+ * wins, because that is how `bun build --compile` embeds N-API addons.
+ * Otherwise `node-gyp-build` resolves `prebuilds/<platform>-<arch>/` and
+ * falls back to a local `build/Release` from a source build.
  */
 export function loadNative(): NativeAddon {
-  if (cached) return cached;
-  if (loadFailure) throw loadFailure;
+  const cached = readSlot(NATIVE_ADDON);
+  if (cached && !(cached instanceof Error)) return cached;
+  const loadFailure = readSlot(NATIVE_LOAD_FAILURE);
+  if (loadFailure instanceof Error) throw loadFailure;
 
   try {
     const load = require_("node-gyp-build") as (root: string) => NativeAddon;
     // The package root is one level up from dist/.
-    cached = load(dirname(__dirname));
-    return cached;
+    const addon = load(dirname(__dirname));
+    writeSlot(NATIVE_ADDON, addon);
+    return addon;
   } catch (cause) {
-    loadFailure = new BackendUnavailableError(
-      "The print-it-now native addon could not be loaded. No prebuilt binary matched " +
-        `${process.platform}-${process.arch}, and building from source did not produce one. ` +
-        "Run `npm rebuild print-it-now --build-from-source` with a C++ toolchain installed, " +
-        "or open an issue with your platform and architecture.",
+    const failure = new BackendUnavailableError(
+      isBunStandaloneExecutable()
+        ? "The print-it-now native addon was not embedded in this executable. " +
+            "Import `print-it-now/platform` (or `print-it-now/platform/win`, " +
+            "`print-it-now/platform/macos`, or `print-it-now/platform/linux`) " +
+            "before compiling with `bun build --compile`."
+        : "The print-it-now native addon could not be loaded. No prebuilt binary matched " +
+            `${process.platform}-${process.arch}, and building from source did not produce one. ` +
+            "Run `npm rebuild print-it-now --build-from-source` with a C++ toolchain installed, " +
+            "or open an issue with your platform and architecture.",
       { cause },
     );
-    throw loadFailure;
+    writeSlot(NATIVE_LOAD_FAILURE, failure);
+    throw failure;
   }
 }
 

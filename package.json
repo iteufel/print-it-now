@@ -1,6 +1,6 @@
 {
   "name": "print-it-now",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Headless PDF and bitmap printing for Node.js and Bun on Windows, macOS and Linux. PDFium + winspool on Windows, CUPS everywhere else.",
   "license": "MIT",
   "author": "iteufel",
@@ -40,6 +40,10 @@
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
+    "./platform": "./src/platform/index.ts",
+    "./platform/win": "./src/platform/win.ts",
+    "./platform/macos": "./src/platform/macos.ts",
+    "./platform/linux": "./src/platform/linux.ts",
     "./package.json": "./package.json"
   },
   "bin": {
@@ -51,6 +55,7 @@
   "files": [
     "dist/",
     "native/",
+    "src/platform/",
     "prebuilds/",
     "scripts/fetch-pdfium.mjs",
     "binding.gyp",
@@ -71,6 +76,7 @@
     "test:e2e": "node scripts/run-tests.mjs test/e2e",
     "test:all": "node scripts/run-tests.mjs test/unit test/e2e",
     "test:bun": "bun test/smoke/bun-smoke.mjs",
+    "test:bun:compile": "bun test/smoke/bun-compile.mjs",
     "check:windows-sources": "bash scripts/check-windows-sources.sh",
     "typecheck": "tsc --noEmit",
     "lint": "npm run typecheck",

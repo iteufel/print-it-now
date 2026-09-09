@@ -9,7 +9,7 @@
  */
 
 export { resetBackendCache, getBackend } from "./backend.js";
-export { loadNative, isNativeAvailable } from "./binding.js";
+export { loadNative, isNativeAvailable, registerNative, resetNativeCache } from "./binding.js";
 export {
   DOCUMENT_KIND_CODE,
   PIXEL_FORMAT_CODE,

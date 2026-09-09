@@ -24,6 +24,8 @@ await printBitmap(
   and submitted as `image/bmp`.
 - **Prebuilt binaries** for eight targets, so installing needs no C++ toolchain.
 - **Node and Bun**, through Node-API. Both are tested on all three platforms.
+  Compiled Bun executables import a `print-it-now/platform/*` entry so the
+  `.node` addon is embedded; see [Bun single-file executables](#bun-single-file-executables).
 - **In-memory documents never touch disk.** A `Buffer` goes straight to the
   printing subsystem rather than through a temporary file.
 
@@ -46,6 +48,42 @@ the CUPS client library, which most distributions already have:
 If only the CUPS command line tools are present (`cups-client`) the package falls
 back to driving `lp`, so it degrades rather than failing outright. See
 [Backends](#backends).
+
+### Bun single-file executables
+
+`bun build --compile` can [embed N-API addons](https://bun.com/docs/bundler/executables#embed-n-api-addons)
+only when the `.node` file is `require`d with a string literal. This package
+loads prebuilds through `node-gyp-build` at runtime, which a compiled executable
+cannot see. Import a platform entry **before** the public API so the bundler
+has a literal to follow:
+
+```js
+import "print-it-now/platform/win";
+import { printPdf } from "print-it-now";
+```
+
+| Import                         | Embeds                                      |
+| ------------------------------ | ------------------------------------------- |
+| `print-it-now/platform/win`    | Windows x64 and arm64 `.node`, plus `pdfium.dll` via `type: "file"` |
+| `print-it-now/platform/macos`  | macOS x64 and arm64                         |
+| `print-it-now/platform/linux`   | Linux x64 and arm64, glibc and musl        |
+| `print-it-now/platform`         | every OS above (larger binary)             |
+
+`pdfium.dll` is imported with `{ type: "file" }` and read with `Bun.file()`,
+so `bun build --compile` embeds it the same way it embeds other assets. The
+Windows platform entry then writes those bytes to a real temp file because
+`LoadLibrary` cannot open Bun's virtual filesystem.
+
+Pick the OS you are compiling for. `print-it-now/platform` is for a binary that
+must run on more than one OS.
+
+```sh
+bun build --compile ./app.ts --outfile myapp
+./myapp
+```
+
+Node, `bun run`, and installing from npm do not need this import: `node-gyp-build`
+still finds `prebuilds/` on disk.
 
 ## Usage
 
@@ -459,6 +497,7 @@ npm run check:windows-sources        # cross-compile the Windows backend on Linu
 bash scripts/setup-test-printer.sh   # create a file-backed queue, prints the env to use
 npm run test:e2e                     # print for real and check the output
 bun test/smoke/bun-smoke.mjs         # verify the addon under Bun
+bun test/smoke/bun-compile.mjs      # after `npm run prebuild`: bun --compile embeds the addon
 ```
 
 The end-to-end suite prints through the platform's real printing subsystem and

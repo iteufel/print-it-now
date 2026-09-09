@@ -217,6 +217,19 @@ jobs:
       - name: Bun smoke test
         run: bun test/smoke/bun-smoke.mjs
 
+      # `bun build --compile` will not find prebuilds through node-gyp-build.
+      # The platform entry require()s the .node file with a string literal so
+      # Bun embeds it. A source build in build/Release is not that path.
+      - name: Build a prebuild for the compile smoke test
+        run: npm run prebuild
+
+      - name: Stage pdfium.dll next to the Windows prebuild
+        if: runner.os == 'Windows'
+        run: node scripts/fetch-pdfium.mjs --target win32-x64
+
+      - name: Bun compile smoke test
+        run: bun test/smoke/bun-compile.mjs
+
   fallback:
     name: CUPS command line fallback
     runs-on: ubuntu-24.04
@@ -269,7 +282,12 @@ jobs:
             package/dist/index.js \
             package/dist/index.cjs \
             package/dist/index.d.ts \
-            package/dist/cli.js
+            package/dist/cli.js \
+            package/src/platform/index.ts \
+            package/src/platform/win.ts \
+            package/src/platform/macos.ts \
+            package/src/platform/linux.ts \
+            package/src/platform/register.ts
           do
             if ! printf '%s\n' "$contents" | grep -qxF "$required"; then
               echo "::error::$required is missing from the published tarball"

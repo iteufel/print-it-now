@@ -5,7 +5,9 @@
  * so a native addon working under Node proves nothing about Bun. This exercises
  * the parts where the two runtimes could plausibly diverge: loading the `.node`
  * file at all, the AsyncWorker promises the addon returns, and the module-path
- * resolution the binding loader depends on.
+ * resolution the binding loader depends on. Compiled executables are a
+ * separate check (`test/smoke/bun-compile.mjs`): they import
+ * `print-it-now/platform/<os>` so Bun can embed the addon.
  *
  * Deliberately not a printing test -- it has to pass on machines with no printer,
  * including CI runners -- so it stops at "the backend answered".

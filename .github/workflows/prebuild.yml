@@ -2,7 +2,9 @@ name: Prebuild
 
 # Builds the binaries that ship in the npm package, so installing needs no C++
 # toolchain. prebuildify lays them out as prebuilds/<platform>-<arch>/, which is
-# the layout node-gyp-build looks in -- and the one Bun understands too.
+# the layout node-gyp-build looks in. Bun `build --compile` cannot follow that
+# runtime lookup; compiled apps import `print-it-now/platform/<os>` instead,
+# which require()s these files with a string literal so Bun can embed them.
 #
 # On a GitHub Release, the collected tarball is published to npm. workflow_dispatch
 # is a dry run: it builds and packs, but does not publish.
