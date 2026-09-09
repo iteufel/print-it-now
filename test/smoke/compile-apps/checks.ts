@@ -46,6 +46,17 @@ export async function runStandaloneChecks(): Promise<void> {
   }
   process.stdout.write(`  ok    ${printers.length} printer(s)\n`);
 
+  if (process.platform === "win32" && printers.length > 0) {
+    try {
+      // Pass JS's PDF header validation, then require PDFium itself to reject
+      // corrupt bytes. This exercises the staged native runtime without printing.
+      await printPdf(Buffer.from("%PDF-1.4\ninvalid document"), { printer: printers[0]!.name });
+      throw new Error("PDFium should reject a corrupt PDF");
+    } catch (error) {
+      if (!(error instanceof PrintError) || error.code !== "EINVALIDPDF") throw error;
+    }
+  }
+
   try {
     await printPdf(Buffer.from("not a pdf"));
     throw new Error("invalid PDF should have been rejected");

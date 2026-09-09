@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, it } from "bun:test";
+import { afterAll, beforeAll, describe, it, setDefaultTimeout } from "bun:test";
 
 import {
   PrintError,
@@ -89,6 +89,8 @@ const needsJobStatus = isLpFallback
 
 /** How long a queue gets to produce output before the test gives up. */
 const OUTPUT_TIMEOUT_MS = Number(process.env["PRINT_IT_NOW_TEST_TIMEOUT_MS"] ?? 45000);
+// The runner must allow the queue's polling deadline plus native rendering time.
+setDefaultTimeout(OUTPUT_TIMEOUT_MS + 30_000);
 
 /** Windows render mode override, threaded into every job when set. */
 const windowsOverrides: NonNullable<PrintOptions["windows"]> =

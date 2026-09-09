@@ -166,8 +166,8 @@ jobs:
           done
           # Only Windows ships PDFium; CUPS reads PDF natively everywhere else.
           for target in win32-x64 win32-arm64; do
-            if [ ! -f "prebuilds/$target/pdfium.dll" ]; then
-              echo "::error::pdfium.dll is missing from prebuilds/$target"
+            if [ ! -f "prebuilds/$target/pdfium.dll" ] || [ ! -s "prebuilds/$target/pdfium-version.txt" ]; then
+              echo "::error::PDFium runtime or version sidecar is missing from prebuilds/$target"
               missing=1
             fi
           done

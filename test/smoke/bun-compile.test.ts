@@ -38,6 +38,8 @@ const compileAssetsByPlatform: Record<string, string[]> = {
     "prebuilds/win32-arm64/print-it-now.glibc.node",
     "prebuilds/win32-x64/pdfium.dll",
     "prebuilds/win32-arm64/pdfium.dll",
+    "prebuilds/win32-x64/pdfium-version.txt",
+    "prebuilds/win32-arm64/pdfium-version.txt",
   ],
 };
 

@@ -74,7 +74,7 @@ struct Library {
 // Returns nullptr and fills `status` when the DLL is missing or unusable.
 const Library* Load(Status* status);
 
-// Version of the loaded runtime, taken from the DLL's own resource information,
+// Version of the loaded runtime, read from the adjacent pdfium-version.txt,
 // or the empty string when it could not be read.
 const std::string& Version();
 
