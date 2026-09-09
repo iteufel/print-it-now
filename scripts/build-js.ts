@@ -93,7 +93,6 @@ await bundle("src/index.ts", {
 await bundle("src/cli.ts", {
   format: "esm",
   naming: "[name].js",
-  banner: "#!/usr/bin/env node",
 });
 
 const cliPath = join(root, "dist/cli.js");

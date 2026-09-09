@@ -12,6 +12,15 @@ const cjs = join(root, "dist/index.cjs");
 const built = existsSync(esm) && existsSync(cjs);
 
 describe.skipIf(!built)("published ESM and CJS bundles", () => {
+  it("the published CLI runs under Node", () => {
+    const result = spawnSync("node", [join(root, "dist/cli.js"), "backend", "--json"], {
+      cwd: tmpdir(), encoding: "utf8",
+    });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).backend).toBe(process.platform === "win32" ? "windows" : "cups");
+  });
+
   for (const format of ["esm", "cjs"] as const) {
     it(`${format} loads the native backend from an unrelated working directory`, () => {
       const entry = format === "esm" ? esm : cjs;
@@ -31,7 +40,7 @@ describe.skipIf(!built)("published ESM and CJS bundles", () => {
   }
 
   it("the ESM build loads the native addon", async () => {
-    const pkg = await import("../../dist/index.js");
+    const pkg = await import(esm) as typeof import("../../src/index.js");
     const info = await pkg.getBackendInfo();
     expect(typeof info.backend).toBe("string");
     expect(info.backend.length).toBeGreaterThan(0);

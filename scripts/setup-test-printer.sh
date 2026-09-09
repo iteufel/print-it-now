@@ -66,11 +66,12 @@ install_linux_packages() {
   fi
 
   log "installing ${wanted[*]}"
-  sudo apt-get update -qq
+  local apt_script="$(dirname "${BASH_SOURCE[0]}")/apt-get-ci.sh"
+  bash "$apt_script" update -qq
   # libcups2t64 is the Ubuntu 24.04 name; older releases call it libcups2.
-  if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${wanted[@]}" 2>/dev/null; then
+  if ! bash "$apt_script" install -y -qq "${wanted[@]}" 2>/dev/null; then
     local fallback=("${wanted[@]/libcups2t64/libcups2}")
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${fallback[@]}"
+    bash "$apt_script" install -y -qq "${fallback[@]}"
   fi
 }
 

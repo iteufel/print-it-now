@@ -5,6 +5,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "types": ["bun"],
+    "paths": { "print-it-now": ["./src/index.ts"] },
 
     "strict": true,
     "noUncheckedIndexedAccess": true,

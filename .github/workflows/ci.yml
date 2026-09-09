@@ -42,8 +42,8 @@ jobs:
       # rather than waiting on a Windows runner.
       - name: Install MinGW-w64
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends g++-mingw-w64-x86-64
+          bash scripts/apt-get-ci.sh update
+          bash scripts/apt-get-ci.sh install -y --no-install-recommends g++-mingw-w64-x86-64
       - run: npm run check:windows-sources
 
   test:
