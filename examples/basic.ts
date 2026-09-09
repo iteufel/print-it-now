@@ -1,7 +1,7 @@
 /**
  * The shortest useful thing you can do with print-it-now.
  *
- * Run with:  node examples/basic.mjs [printer-name]
+ * Run with:  bun examples/basic.ts [printer-name]
  */
 
 import { getBackendInfo, getDefaultPrinter, listPrinters, printPdf } from "print-it-now";

@@ -1,8 +1,30 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { BackendUnavailableError } from "./errors.js";
 import type { BackendInfo, JobStatus, Printer } from "./types.js";
 import type { NativeRequest } from "./options.js";
+
+/** Resolve relative to this module, independent of the application's cwd.
+ * The CJS build substitutes a runtime __filename URL for import.meta.url.
+ * Standalone executables use registration and never call this function.
+ */
+function packageRoot(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+/**
+ * `node-gyp-build` lookup, kept opaque so `Bun.build` does not hoist
+ * `createRequire(join(packageRoot(), "package.json"))` to module load.
+ * That hoist resolves `print-it-now` before a compiled app can use an
+ * addon already registered by `print-it-now/platform/*`.
+ */
+function loadViaNodeGypBuild(): NativeAddon {
+  const root = packageRoot();
+  const makeRequire: typeof createRequire = createRequire;
+  const req = makeRequire(join(root, "package.json"));
+  return (req("node-gyp-build") as (dir: string) => NativeAddon)(root);
+}
 
 /** The addon's exported surface. Mirrors native/src/addon.cc. */
 export interface NativeAddon {
@@ -68,16 +90,12 @@ function isBunStandaloneExecutable(): boolean {
   return bun?.isStandaloneExecutable === true;
 }
 
-// tsup's `shims` option gives both the ESM and the CJS build a working
-// `__dirname`, so the same source locates the addon in either module system.
-const require_ = createRequire(join(__dirname, "index.js"));
-
 /**
  * Stores an already-loaded addon so {@link loadNative} does not search again.
  *
- * Used by the `print-it-now/platform/*` entries, which `require` the `.node`
- * file with a string literal so `bun build --compile` can embed it. Also
- * used by tests to inject a fake addon.
+ * Used by the `print-it-now/platform/*` entries, which statically import the
+ * `.node` file with `{ type: "file" }` so `Bun.build({ compile })` embeds it.
+ * Also used by tests to inject a fake addon.
  */
 export function registerNative(addon: NativeAddon): void {
   writeSlot(NATIVE_ADDON, addon);
@@ -93,7 +111,7 @@ export function resetNativeCache(): void {
 /**
  * Loads the native addon, preferring a prebuilt binary.
  *
- * A `print-it-now/platform/*` import that already `require`d the `.node` file
+ * A `print-it-now/platform/*` import that already loaded the `.node` file
  * wins, because that is how `bun build --compile` embeds N-API addons.
  * Otherwise `node-gyp-build` resolves `prebuilds/<platform>-<arch>/` and
  * falls back to a local `build/Release` from a source build.
@@ -104,23 +122,27 @@ export function loadNative(): NativeAddon {
   const loadFailure = readSlot(NATIVE_LOAD_FAILURE);
   if (loadFailure instanceof Error) throw loadFailure;
 
+  if (isBunStandaloneExecutable()) {
+    const failure = new BackendUnavailableError(
+      "The print-it-now native addon was not embedded in this executable. " +
+        "Import `print-it-now/platform` (or `print-it-now/platform/win`, " +
+        "`print-it-now/platform/macos`, or `print-it-now/platform/linux`) " +
+        "before compiling with `Bun.build({ compile })`.",
+    );
+    writeSlot(NATIVE_LOAD_FAILURE, failure);
+    throw failure;
+  }
+
   try {
-    const load = require_("node-gyp-build") as (root: string) => NativeAddon;
-    // The package root is one level up from dist/.
-    const addon = load(dirname(__dirname));
+    const addon = loadViaNodeGypBuild();
     writeSlot(NATIVE_ADDON, addon);
     return addon;
   } catch (cause) {
     const failure = new BackendUnavailableError(
-      isBunStandaloneExecutable()
-        ? "The print-it-now native addon was not embedded in this executable. " +
-            "Import `print-it-now/platform` (or `print-it-now/platform/win`, " +
-            "`print-it-now/platform/macos`, or `print-it-now/platform/linux`) " +
-            "before compiling with `bun build --compile`."
-        : "The print-it-now native addon could not be loaded. No prebuilt binary matched " +
-            `${process.platform}-${process.arch}, and building from source did not produce one. ` +
-            "Run `npm rebuild print-it-now --build-from-source` with a C++ toolchain installed, " +
-            "or open an issue with your platform and architecture.",
+      "The print-it-now native addon could not be loaded. No prebuilt binary matched " +
+        `${process.platform}-${process.arch}, and building from source did not produce one. ` +
+        "Run `npm rebuild print-it-now --build-from-source` with a C++ toolchain installed, " +
+        "or open an issue with your platform and architecture.",
       { cause },
     );
     writeSlot(NATIVE_LOAD_FAILURE, failure);

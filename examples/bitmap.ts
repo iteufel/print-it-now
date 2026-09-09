@@ -1,7 +1,7 @@
 /**
  * Print a synthetic raw bitmap without wrapping it in a PDF.
  *
- * Run with:  node examples/bitmap.mjs [printer-name]
+ * Run with:  bun examples/bitmap.ts [printer-name]
  */
 
 import { getBackendInfo, getDefaultPrinter, listPrinters, printBitmap } from "print-it-now";

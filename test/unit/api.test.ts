@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it } from "bun:test";
 
 import {
   BackendError,
@@ -18,8 +18,8 @@ import {
   parsePageRanges,
   printBitmap,
   printPdf,
-} from "../../dist/index.js";
-import { makePdf } from "../helpers/pdf.mjs";
+} from "../../src/index.js";
+import { makePdf } from "../helpers/pdf.js";
 
 describe("public surface", () => {
   it("exports the documented functions", () => {
@@ -85,7 +85,7 @@ describe("printPdf input validation", () => {
 
   it("rejects a source that is neither a path nor bytes", async () => {
     for (const source of [42, null, undefined, {}, true]) {
-      await assert.rejects(printPdf(source), { code: "EINVALIDOPTION", option: "source" });
+      await assert.rejects(printPdf(source as never), { code: "EINVALIDOPTION", option: "source" });
     }
   });
 

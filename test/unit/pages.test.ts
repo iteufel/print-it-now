@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it } from "bun:test";
 
-import { OPEN_ENDED, parsePageRanges, toIppPageRanges } from "../../dist/internal.js";
+import { OPEN_ENDED, parsePageRanges, toIppPageRanges } from "../../src/internal.js";
 
 describe("parsePageRanges", () => {
   it("parses single pages", () => {
@@ -59,7 +59,7 @@ describe("parsePageRanges", () => {
     ["1..3", "wrong separator"],
   ]) {
     it(`rejects ${JSON.stringify(input)} (${reason})`, () => {
-      assert.throws(() => parsePageRanges(input), { code: "EINVALIDOPTION", option: "pages" });
+      assert.throws(() => parsePageRanges(input as string), { code: "EINVALIDOPTION", option: "pages" });
     });
   }
 });

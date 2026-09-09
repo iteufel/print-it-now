@@ -3,9 +3,8 @@
  *
  * These are the pure pieces of the package -- option validation, the two backend
  * mappings, page range parsing -- plus the hooks the end-to-end tests need. They
- * are built into `dist/internal.js` but deliberately left out of package.json's
- * `exports`, so they are reachable from the test suite without becoming part of
- * the supported API.
+ * are imported by the test suite from this file. It is deliberately left out
+ * of package.json's `exports`, so it never becomes part of the supported API.
  */
 
 export { resetBackendCache, getBackend } from "./backend.js";

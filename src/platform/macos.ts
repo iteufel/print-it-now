@@ -1,32 +1,25 @@
 /**
- * Side-effect import for `bun build --compile`.
+ * Side-effect import for `bun build --compile` / `Bun.build({ compile })`.
  *
- * Bun only embeds N-API addons that it can see as `require("./file.node")` with
- * a string literal. `node-gyp-build` builds that path at runtime, so a compiled
- * executable cannot find `prebuilds/` on disk. Importing this file is what
- * makes the Darwin binaries part of the bundle:
+ * The `.node` files must be static ESM imports with `{ type: "file" }`.
+ * `createRequire()("….node")` is not followed by `Bun.build()`, so a compiled
+ * executable would ship with no addon. Importing this file is what embeds the
+ * Darwin binaries:
  *
  *   import "print-it-now/platform/macos";
  *   import { printPdf } from "print-it-now";
  *
- * Each `require` is wrapped in try/catch so a machine that only has one Darwin
- * arch (or a source checkout with no prebuilds) still loads.
+ * Both arches are imported so a compile for either Darwin target embeds both.
+ * Only the matching one is `require`d at runtime. prebuildify `--tag-libc`
+ * names the file `print-it-now.glibc.node` even on macOS.
  */
 
-import { createRequire } from "node:module";
-import { accept } from "./register.js";
+import darwinArm64 from "../../prebuilds/darwin-arm64/print-it-now.glibc.node" with { type: "file" };
+import darwinX64 from "../../prebuilds/darwin-x64/print-it-now.glibc.node" with { type: "file" };
+import { loadEmbedded } from "./register.js";
 
-const require = createRequire(import.meta.url);
-
-try {
-  accept(require("../../prebuilds/darwin-arm64/node.napi.node"));
-} catch {
-  // Wrong arch, or the prebuild is not in this install.
-}
-try {
-  accept(require("../../prebuilds/darwin-x64/node.napi.node"));
-} catch {
-  // Wrong arch, or the prebuild is not in this install.
+if (process.platform === "darwin") {
+  loadEmbedded(process.arch === "arm64" ? darwinArm64 : darwinX64);
 }
 
 export {};

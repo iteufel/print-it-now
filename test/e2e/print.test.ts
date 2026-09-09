@@ -2,17 +2,20 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, before, describe, it } from "node:test";
+import { afterAll, beforeAll, describe, it } from "bun:test";
 
 import {
+  PrintError,
   cancelJob,
   getBackendInfo,
   getJob,
   listJobs,
   listPrinters,
   printPdf,
-} from "../../dist/index.js";
-import { countPdfPages, makePdf, mmToPoints, readMediaBox } from "../helpers/pdf.mjs";
+  type PdfSource,
+  type PrintOptions,
+} from "../../src/index.js";
+import { countPdfPages, makePdf, mmToPoints, readMediaBox } from "../helpers/pdf.js";
 
 /**
  * Prints for real, through the platform's actual printing subsystem, and checks
@@ -88,22 +91,25 @@ const needsJobStatus = isLpFallback
 const OUTPUT_TIMEOUT_MS = Number(process.env["PRINT_IT_NOW_TEST_TIMEOUT_MS"] ?? 45000);
 
 /** Windows render mode override, threaded into every job when set. */
-const windowsOverrides = renderMode === undefined ? {} : { renderMode };
+const windowsOverrides: NonNullable<PrintOptions["windows"]> =
+  renderMode === "bitmap" || renderMode === "vector" ? { renderMode } : {};
 
-let workDir;
+let workDir = "";
 
-before(async () => {
+beforeAll(async () => {
   workDir = await mkdtemp(join(tmpdir(), "print-it-now-e2e-"));
 });
 
-after(async () => {
+afterAll(async () => {
   if (workDir) await rm(workDir, { recursive: true, force: true });
 });
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Waits for a file to appear and stop growing, so a half-written PDF is never read. */
-async function waitForStableFile(predicate) {
+async function waitForStableFile(
+  predicate: () => Promise<string | undefined>,
+): Promise<Buffer | undefined> {
   const deadline = Date.now() + OUTPUT_TIMEOUT_MS;
   let lastSize = -1;
   let stableFor = 0;
@@ -129,7 +135,7 @@ async function waitForStableFile(predicate) {
   return undefined;
 }
 
-async function fileIfPresent(path) {
+async function fileIfPresent(path: string): Promise<string | undefined> {
   try {
     await readFile(path);
     return path;
@@ -145,9 +151,9 @@ async function fileIfPresent(path) {
  * the filename: on Windows the caller does, a cups-pdf queue names each file
  * after the job title, and a raw `file:` queue overwrites one fixed path.
  */
-async function printAndCollect(source, options = {}) {
+async function printAndCollect(source: PdfSource, options: PrintOptions = {}) {
   const jobName = options.jobName ?? `e2e-${Math.random().toString(36).slice(2, 10)}`;
-  const submit = (extra = {}) =>
+  const submit = (extra: NonNullable<PrintOptions["windows"]> = {}) =>
     printPdf(source, {
       ...options,
       jobName,
@@ -171,21 +177,22 @@ async function printAndCollect(source, options = {}) {
     return { job, bytes: await waitForStableFile(() => fileIfPresent(outputFile)) };
   }
 
-  const before = new Set(await readdir(outputDir).catch(() => []));
+  const before = new Set(await readdir(outputDir ?? "").catch(() => []));
   const job = await submit();
   const bytes = await waitForStableFile(async () => {
-    const now = await readdir(outputDir).catch(() => []);
+    const now = await readdir(outputDir ?? "").catch(() => []);
     const created = now.filter((name) => !before.has(name));
     if (created.length === 0) return undefined;
     // Prefer a file the queue named after the job, but do not require it: only
     // one job is in flight at a time, so any new file is this job's output.
     const named = created.find((name) => name.includes(jobName));
-    return join(outputDir, named ?? created[0]);
+    return join(outputDir ?? "", named ?? created[0]!);
   });
   return { job, bytes };
 }
 
-describe("end-to-end printing", { skip }, () => {
+describe.skipIf(Boolean(skip))("end-to-end printing", () => {
+  const queue = printer ?? "";
   it("reports the backend that is doing the work", async () => {
     const info = await getBackendInfo();
     const expected = isLpFallback ? "lp-fallback" : isWindows ? "windows" : "cups";
@@ -200,15 +207,15 @@ describe("end-to-end printing", { skip }, () => {
   it("lists the test queue", async () => {
     const printers = await listPrinters();
     assert.ok(
-      printers.some((entry) => entry.name === printer),
-      `expected "${printer}" among ${printers.map((p) => p.name).join(", ")}`,
+      printers.some((entry) => entry.name === queue),
+      `expected "${queue}" among ${printers.map((p) => p.name).join(", ")}`,
     );
   });
 
   it("prints a PDF passed as bytes", async () => {
     const { job, bytes } = await printAndCollect(makePdf({ pages: 3, label: "bytes" }));
     assert.ok(job.jobId > 0, "a job id should come back");
-    assert.equal(job.printer, printer);
+    assert.equal(job.printer, queue);
     if (canInspectOutput) {
       assert.ok(bytes, "the queue should have produced output");
       assert.equal(countPdfPages(bytes), 3);
@@ -226,7 +233,7 @@ describe("end-to-end printing", { skip }, () => {
     }
   });
 
-  it("honours a page range", { skip: needsFilters }, async () => {
+  it.skipIf(Boolean(needsFilters))("honours a page range", async () => {
     const { bytes } = await printAndCollect(makePdf({ pages: 8 }), {
       jobName: "e2e-range",
       pages: "2-4",
@@ -235,7 +242,7 @@ describe("end-to-end printing", { skip }, () => {
     assert.equal(countPdfPages(bytes), 3);
   });
 
-  it("honours an open-ended page range", { skip: needsFilters }, async () => {
+  it.skipIf(Boolean(needsFilters))("honours an open-ended page range", async () => {
     const { bytes } = await printAndCollect(makePdf({ pages: 6 }), {
       jobName: "e2e-open-range",
       pages: "5-",
@@ -244,7 +251,7 @@ describe("end-to-end printing", { skip }, () => {
     assert.equal(countPdfPages(bytes), 2);
   });
 
-  it("honours an odd page subset", { skip: needsFilters }, async () => {
+  it.skipIf(Boolean(needsFilters))("honours an odd page subset", async () => {
     const { bytes } = await printAndCollect(makePdf({ pages: 7 }), {
       jobName: "e2e-odd",
       pageSubset: "odd",
@@ -253,7 +260,7 @@ describe("end-to-end printing", { skip }, () => {
     assert.equal(countPdfPages(bytes), 4);
   });
 
-  it("honours a paper size", { skip: needsFilters }, async () => {
+  it.skipIf(Boolean(needsFilters))("honours a paper size", async () => {
     const { bytes } = await printAndCollect(makePdf({ pages: 1 }), {
       jobName: "e2e-a5",
       paperSize: "A5",
@@ -288,13 +295,14 @@ describe("end-to-end printing", { skip }, () => {
     // cups-filters duplicates the pages. Only assert the count where the setup
     // script has established which of the two this queue does.
     if (copiesMultiplyPages) {
+      assert.ok(bytes);
       assert.equal(countPdfPages(bytes), 4);
     }
   });
 
-  it("reads back the state of a submitted job", { skip: needsJobStatus }, async () => {
+  it.skipIf(Boolean(needsJobStatus))("reads back the state of a submitted job", async () => {
     const job = await printPdf(makePdf({ pages: 1 }), {
-      printer,
+      printer: queue,
       jobName: "e2e-status",
       ...(isWindows ? { windows: { outputFile: join(workDir, "status.pdf") } } : {}),
     });
@@ -302,7 +310,7 @@ describe("end-to-end printing", { skip }, () => {
     // The job may already have finished and left the queue, which is a valid
     // outcome; what matters is that a lookup either describes it or says it is
     // gone, rather than failing.
-    const status = await getJob(printer, job.jobId);
+    const status = await getJob(queue, job.jobId);
     if (status !== null) {
       assert.equal(status.jobId, job.jobId);
       assert.ok(
@@ -314,14 +322,14 @@ describe("end-to-end printing", { skip }, () => {
     }
   });
 
-  it("lists jobs in a printer's queue", { skip: needsJobStatus }, async () => {
+  it.skipIf(Boolean(needsJobStatus))("lists jobs in a printer's queue", async () => {
     const job = await printPdf(makePdf({ pages: 1 }), {
-      printer,
+      printer: queue,
       jobName: "e2e-list-jobs",
       ...(isWindows ? { windows: { outputFile: join(workDir, "list-jobs.pdf") } } : {}),
     });
 
-    const jobs = await listJobs(printer);
+    const jobs = await listJobs(queue);
     assert.ok(Array.isArray(jobs));
     // The job may already have left the queue; if it is still there, it must
     // round-trip with a recognisable state.
@@ -337,22 +345,20 @@ describe("end-to-end printing", { skip }, () => {
     }
   });
 
-  it("reports null for a job id that was never issued", { skip: needsJobStatus }, async () => {
-    assert.equal(await getJob(printer, 999_999), null);
+  it.skipIf(Boolean(needsJobStatus))("reports null for a job id that was never issued", async () => {
+    assert.equal(await getJob(queue, 999_999), null);
   });
 
-  it("returns an array when listing jobs", { skip: needsJobStatus }, async () => {
-    const jobs = await listJobs(printer);
+  it.skipIf(Boolean(needsJobStatus))("returns an array when listing jobs", async () => {
+    const jobs = await listJobs(queue);
     assert.ok(Array.isArray(jobs));
   });
 
-  it("says so plainly when the fallback cannot report job status", {
-    skip: isLpFallback ? false : "only applies to the lp fallback",
-  }, async () => {
+  it.skipIf(!isLpFallback)("says so plainly when the fallback cannot report job status", async () => {
     // Refusing is the honest answer here: the command line tools report state as
     // localised prose, and guessing at it would be worse than saying no.
-    await assert.rejects(getJob(printer, 1), { code: "EBACKENDUNAVAILABLE" });
-    await assert.rejects(listJobs(printer), { code: "EBACKENDUNAVAILABLE" });
+    await assert.rejects(getJob(queue, 1), { code: "EBACKENDUNAVAILABLE" });
+    await assert.rejects(listJobs(queue), { code: "EBACKENDUNAVAILABLE" });
   });
 
   it("rejects printing to a queue that does not exist", async () => {
@@ -366,7 +372,7 @@ describe("end-to-end printing", { skip }, () => {
     // CUPS trusts the document format a client declares and only aborts the job
     // later during filtering, so without the header check in printPdf this would
     // silently look like a success on Linux and a failure on Windows.
-    await assert.rejects(printPdf(Buffer.from("this is definitely not a PDF"), { printer }), {
+    await assert.rejects(printPdf(Buffer.from("this is definitely not a PDF"), { printer: queue }), {
       code: "EINVALIDPDF",
     });
   });
@@ -374,18 +380,18 @@ describe("end-to-end printing", { skip }, () => {
   it("rejects a file that is not a PDF", async () => {
     const path = join(workDir, "not-a-pdf.txt");
     await writeFile(path, "PK\u0003\u0004 this is a zip, not a PDF");
-    await assert.rejects(printPdf(path, { printer }), { code: "EINVALIDPDF" });
+    await assert.rejects(printPdf(path, { printer: queue }), { code: "EINVALIDPDF" });
   });
 
   it("rejects a file that does not exist, naming it", async () => {
-    await assert.rejects(printPdf(join(workDir, "absent.pdf"), { printer }), {
+    await assert.rejects(printPdf(join(workDir, "absent.pdf"), { printer: queue }), {
       code: "EINVALIDPDF",
     });
   });
 
   it("cancels a job", async () => {
     const job = await printPdf(makePdf({ pages: 40 }), {
-      printer,
+      printer: queue,
       jobName: "e2e-cancel",
       ...(isWindows ? { windows: { outputFile: join(workDir, "cancel.pdf") } } : {}),
     });
@@ -393,8 +399,9 @@ describe("end-to-end printing", { skip }, () => {
     // A short job can complete before the cancel lands, in which case the queue
     // rightly reports there is nothing left to cancel.
     try {
-      await cancelJob(printer, job.jobId);
+      await cancelJob(queue, job.jobId);
     } catch (error) {
+      assert.ok(error instanceof PrintError);
       assert.equal(error.code, "EJOBNOTFOUND", `unexpected failure: ${error.message}`);
     }
   });

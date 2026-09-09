@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it } from "bun:test";
 
-import { lpFallback } from "../../dist/internal.js";
+import { lpFallback } from "../../src/internal.js";
 
 const { isNotCancellableMessage } = lpFallback;
 

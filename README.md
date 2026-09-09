@@ -51,15 +51,28 @@ back to driving `lp`, so it degrades rather than failing outright. See
 
 ### Bun single-file executables
 
-`bun build --compile` can [embed N-API addons](https://bun.com/docs/bundler/executables#embed-n-api-addons)
-only when the `.node` file is `require`d with a string literal. This package
+`bun build --compile` and `Bun.build({ compile })` [embed N-API addons](https://bun.com/docs/bundler/executables#embed-n-api-addons)
+when they see a direct `.node` require or a static file import. This package
 loads prebuilds through `node-gyp-build` at runtime, which a compiled executable
-cannot see. Import a platform entry **before** the public API so the bundler
-has a literal to follow:
+cannot see — and `createRequire()("….node")` is not followed by the Bun.build
+API. Import a platform entry **before** the public API so the bundler has a
+static import to follow:
 
-```js
+```ts
 import "print-it-now/platform/win";
 import { printPdf } from "print-it-now";
+
+await printPdf("report.pdf");
+```
+
+Compile that `app.ts` from a separate build script:
+
+```ts
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  compile: { outfile: "myapp" },
+  format: "esm", // also supports top-level await when enabling bytecode
+});
 ```
 
 | Import                         | Embeds                                      |
@@ -69,13 +82,20 @@ import { printPdf } from "print-it-now";
 | `print-it-now/platform/linux`   | Linux x64 and arm64, glibc and musl        |
 | `print-it-now/platform`         | every OS above (larger binary)             |
 
-`pdfium.dll` is imported with `{ type: "file" }` and read with `Bun.file()`,
-so `bun build --compile` embeds it the same way it embeds other assets. The
-Windows platform entry then writes those bytes to a real temp file because
-`LoadLibrary` cannot open Bun's virtual filesystem.
+The `.node` files and `pdfium.dll` are imported with `{ type: "file" }` so
+both the CLI and `Bun.build()` embed them (they show up on `Bun.embeddedFiles`).
+The matching addon is then `require`d from the `/$bunfs/` path at runtime.
+On Windows, `pdfium.dll` is read with `Bun.file()` and written to a real temp
+file in a unique temporary directory because `LoadLibrary` cannot open Bun's
+virtual filesystem. Concurrent processes never overwrite a loaded DLL. These
+files remain in the OS temporary directory after exit.
 
-Pick the OS you are compiling for. `print-it-now/platform` is for a binary that
-must run on more than one OS.
+Pick the OS you are compiling for. `print-it-now/platform` lets one source entry
+be compiled separately for different targets; each executable still targets one
+OS and architecture. Cross-compilation selects the addon at runtime on the
+destination. All files referenced by the selected entry must exist at build time;
+the release npm tarball includes them. A local single-target source build does not.
+The destination still needs its OS printing subsystem and printer drivers.
 
 ```sh
 bun build --compile ./app.ts --outfile myapp
@@ -492,12 +512,11 @@ node scripts/fetch-pdfium.mjs
 ### Testing
 
 ```sh
-npm test                             # unit tests, no printer needed
+bun test test/unit                   # unit tests, no printer needed
 npm run check:windows-sources        # cross-compile the Windows backend on Linux
 bash scripts/setup-test-printer.sh   # create a file-backed queue, prints the env to use
-npm run test:e2e                     # print for real and check the output
-bun test/smoke/bun-smoke.mjs         # verify the addon under Bun
-bun test/smoke/bun-compile.mjs      # after `npm run prebuild`: bun --compile embeds the addon
+bun test test/e2e                   # print for real and check the output
+bun test test/smoke                 # Bun Node-API load + compile, after `npm run prebuild`
 ```
 
 The end-to-end suite prints through the platform's real printing subsystem and

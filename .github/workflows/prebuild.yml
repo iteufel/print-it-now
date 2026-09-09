@@ -4,7 +4,7 @@ name: Prebuild
 # toolchain. prebuildify lays them out as prebuilds/<platform>-<arch>/, which is
 # the layout node-gyp-build looks in. Bun `build --compile` cannot follow that
 # runtime lookup; compiled apps import `print-it-now/platform/<os>` instead,
-# which require()s these files with a string literal so Bun can embed them.
+# which statically imports these files with `{ type: "file" }` so Bun embeds them.
 #
 # On a GitHub Release, the collected tarball is published to npm. workflow_dispatch
 # is a dry run: it builds and packs, but does not publish.
@@ -156,6 +156,14 @@ jobs:
               missing=1
             fi
           done
+          for arch in x64 arm64; do
+            for libc in glibc musl; do
+              if [ ! -f "prebuilds/linux-$arch/print-it-now.$libc.node" ]; then
+                echo "::error::missing linux-$arch $libc addon"
+                missing=1
+              fi
+            done
+          done
           # Only Windows ships PDFium; CUPS reads PDF natively everywhere else.
           for target in win32-x64 win32-arm64; do
             if [ ! -f "prebuilds/$target/pdfium.dll" ]; then
@@ -165,8 +173,14 @@ jobs:
           done
           exit "$missing"
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - run: npm ci --ignore-scripts
       - run: npm run build:ts
+
+      - name: Verify standalone executables with the collected release binaries
+        run: bun test test/smoke/bun-compile.test.ts
 
       - name: Build the publishable tarball
         run: npm pack --dry-run && npm pack

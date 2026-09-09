@@ -135,7 +135,7 @@ async function main() {
     return;
   }
 
-  // The tag contains a slash ("chromium/7961"), which has to stay encoded in the
+  // The tag contains a slash ("chromium/8044"), which has to stay encoded in the
   // download path or GitHub reads it as an extra path segment.
   const encodedTag = lock.tag.replace(/\//g, "%2F");
   const url =

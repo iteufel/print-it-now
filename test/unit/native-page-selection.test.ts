@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it } from "bun:test";
 
-import { loadNative } from "../../dist/internal.js";
-import { parsePageRanges } from "../../dist/internal.js";
+import { loadNative } from "../../src/internal.js";
+import { parsePageRanges } from "../../src/internal.js";
 
 /**
  * Page expansion happens natively because it needs the document's real page
@@ -12,9 +12,13 @@ import { parsePageRanges } from "../../dist/internal.js";
  */
 const native = loadNative();
 
-const SUBSET = { all: 0, odd: 1, even: 2 };
+const SUBSET = { all: 0, odd: 1, even: 2 } as const;
 
-function expand(expression, pageCount, { subset = "all", reverse = false } = {}) {
+function expand(
+  expression: string | null,
+  pageCount: number,
+  { subset = "all", reverse = false }: { subset?: keyof typeof SUBSET; reverse?: boolean } = {},
+) {
   const ranges = expression === null ? [] : parsePageRanges(expression);
   return native._expandPageSelection(ranges, SUBSET[subset], reverse, pageCount);
 }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it } from "bun:test";
 
 import {
   DOCUMENT_KIND_CODE,
@@ -9,10 +9,14 @@ import {
   readBitmapSource,
   resolveBitmapOptions,
   toIppOptions,
-} from "../../dist/internal.js";
-import { printBitmap } from "../../dist/index.js";
+} from "../../src/internal.js";
+import { printBitmap } from "../../src/index.js";
 
-function solidBitmap(width, height, rgba = [255, 0, 0, 255]) {
+function solidBitmap(
+  width: number,
+  height: number,
+  rgba: [number, number, number, number] = [255, 0, 0, 255],
+) {
   const data = Buffer.alloc(width * height * 4);
   for (let i = 0; i < data.length; i += 4) {
     data[i] = rgba[0];
@@ -20,7 +24,7 @@ function solidBitmap(width, height, rgba = [255, 0, 0, 255]) {
     data[i + 2] = rgba[2];
     data[i + 3] = rgba[3];
   }
-  return { width, height, data, format: "rgba" };
+  return { width, height, data, format: "rgba" as const };
 }
 
 describe("readBitmapSource", () => {
@@ -58,7 +62,7 @@ describe("readBitmapSource", () => {
 
   it("rejects an unknown pixel format", () => {
     assert.throws(
-      () => readBitmapSource({ width: 1, height: 1, data: Buffer.alloc(4), format: "rgb" }),
+      () => readBitmapSource({ width: 1, height: 1, data: Buffer.alloc(4), format: "rgb" as never }),
       { code: "EINVALIDOPTION", option: "source.format" },
     );
   });
@@ -78,7 +82,7 @@ describe("resolveBitmapOptions", () => {
       [{ windows: { renderMode: "bitmap" } }, "windows.renderMode"],
       [{ windows: { printMode: "emf" } }, "windows.printMode"],
     ]) {
-      assert.throws(() => resolveBitmapOptions(options), {
+      assert.throws(() => resolveBitmapOptions(options as never), {
         code: "EINVALIDOPTION",
         option,
       });
@@ -158,7 +162,7 @@ describe("printBitmap input validation", () => {
       option: "source.data",
     });
     await assert.rejects(
-      printBitmap(solidBitmap(1, 1), { pages: "1" }),
+      printBitmap(solidBitmap(1, 1), { pages: "1" } as never),
       { code: "EINVALIDOPTION", option: "pages" },
     );
   });

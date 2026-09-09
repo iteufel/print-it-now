@@ -37,6 +37,7 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "bun": "./src/index.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
@@ -55,7 +56,7 @@
   "files": [
     "dist/",
     "native/",
-    "src/platform/",
+    "src/",
     "prebuilds/",
     "scripts/fetch-pdfium.mjs",
     "binding.gyp",
@@ -65,18 +66,17 @@
   "scripts": {
     "install": "node-gyp-build",
     "build": "npm run build:native && npm run build:ts",
-    "build:ts": "tsup",
+    "build:ts": "bun scripts/build-js.ts",
     "build:native": "node-gyp rebuild",
     "build:native:debug": "node-gyp rebuild --debug",
     "configure": "node-gyp configure",
     "fetch-pdfium": "node scripts/fetch-pdfium.mjs",
     "prebuild": "prebuildify --napi --strip --tag-libc",
-    "test": "npm run test:unit",
-    "test:unit": "node scripts/run-tests.mjs test/unit",
-    "test:e2e": "node scripts/run-tests.mjs test/e2e",
-    "test:all": "node scripts/run-tests.mjs test/unit test/e2e",
-    "test:bun": "bun test/smoke/bun-smoke.mjs",
-    "test:bun:compile": "bun test/smoke/bun-compile.mjs",
+    "test": "bun test test/unit",
+    "test:unit": "bun test test/unit",
+    "test:e2e": "bun test test/e2e",
+    "test:all": "bun test test/unit test/e2e",
+    "test:smoke": "bun test test/smoke",
     "check:windows-sources": "bash scripts/check-windows-sources.sh",
     "typecheck": "tsc --noEmit",
     "lint": "npm run typecheck",
@@ -87,14 +87,11 @@
     "node-gyp-build": "^4.8.4"
   },
   "devDependencies": {
+    "@types/bun": "^1.4.2",
     "@types/node": "^22.10.2",
     "node-gyp": "^13.0.1",
     "prebuildify": "^6.0.1",
-    "tsup": "^8.5.1",
     "typescript": "^5.9.3"
-  },
-  "overrides": {
-    "esbuild": "^0.28.1"
   },
   "gypfile": true,
   "publishConfig": {

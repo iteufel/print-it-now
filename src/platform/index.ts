@@ -3,8 +3,8 @@
  *
  * Prefer a single-OS entry (`print-it-now/platform/win`, `.../macos`, or
  * `.../linux`) when you know the compile target: those keep the unused
- * binaries out of the binary. This barrel is for a build that must run on
- * more than one OS.
+ * binaries out of the binary. This barrel lets one source entry be compiled
+ * separately for multiple OS targets. Each executable targets a single OS.
  *
  *   import "print-it-now/platform";
  *   import { printPdf } from "print-it-now";

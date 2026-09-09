@@ -1,12 +1,6 @@
-declare module "bun" {
-  export function file(path: string): {
-    arrayBuffer(): Promise<ArrayBuffer>;
-  };
-}
-
 declare module "*.node" {
-  const addon: import("../binding.js").NativeAddon;
-  export default addon;
+  const path: string;
+  export default path;
 }
 
 declare module "*.dll" {

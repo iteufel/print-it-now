@@ -25,6 +25,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm run build:ts
@@ -66,6 +69,10 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
@@ -103,10 +110,10 @@ jobs:
           "PRINT_IT_NOW_TEST_RENDERS=1" >> $env:GITHUB_ENV
 
       - name: Unit tests
-        run: npm run test:unit
+        run: bun test test/unit
 
       - name: End-to-end tests
-        run: npm run test:e2e
+        run: bun test test/e2e
 
       - name: Report the resolved backend
         run: node dist/cli.js backend --json
@@ -126,6 +133,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - run: npm ci --ignore-scripts
       - run: npm run prebuild
       - run: npm run build:ts
@@ -146,8 +156,25 @@ jobs:
           esac
 
       - run: bash scripts/setup-test-printer.sh PrintItNowTest >> "$GITHUB_ENV"
-      - run: npm run test:unit
-      - run: npm run test:e2e
+      - name: Node 18 loads the prebuilt CJS and ESM builds
+        run: |
+          node -e "
+            const { getBackendInfo, listPrinters } = require('./dist/index.cjs');
+            Promise.all([getBackendInfo(), listPrinters()]).then(([info, printers]) => {
+              if (info.backend !== 'cups') throw new Error('CJS native backend missing');
+              if (!Array.isArray(printers)) throw new Error('CJS listPrinters');
+              console.log('cjs', info);
+            });
+          "
+          node --input-type=module -e "
+            import { getBackendInfo, listPrinters } from './dist/index.js';
+            const info = await getBackendInfo();
+            const printers = await listPrinters();
+            if (info.backend !== 'cups') throw new Error('ESM native backend missing');
+            if (!Array.isArray(printers)) throw new Error('ESM listPrinters');
+            console.log('esm', info);
+          "
+      - run: node dist/cli.js backend --json
 
   test-windows-bitmap:
     name: Test on Windows x64 (bitmap render mode)
@@ -158,6 +185,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - run: npm ci --ignore-scripts
       - run: npm run build
       # After the build: `node-gyp rebuild` cleans build/.
@@ -176,7 +206,7 @@ jobs:
           # those assertions are meaningful here and must not be skipped -- they
           # are what proves the banded StretchDIBits path lands pages correctly.
           PRINT_IT_NOW_TEST_RENDERS: "1"
-        run: npm run test:e2e
+        run: bun test test/e2e
 
   bun:
     name: Bun on ${{ matrix.label }}
@@ -186,8 +216,11 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-24.04, label: Linux x64 }
+          - { os: ubuntu-24.04-arm, label: Linux arm64 }
           - { os: macos-15, label: macOS arm64 }
+          - { os: macos-15-intel, label: macOS x64 }
           - { os: windows-2022, label: Windows x64 }
+          - { os: windows-11-arm, label: Windows arm64 }
     steps:
       - uses: actions/checkout@v4
 
@@ -215,20 +248,25 @@ jobs:
       # working under Node proves nothing about Bun. This checks addon loading,
       # the promises AsyncWorker resolves, and error propagation.
       - name: Bun smoke test
-        run: bun test/smoke/bun-smoke.mjs
+        run: bun test test/smoke/bun-smoke.test.ts
 
-      # `bun build --compile` will not find prebuilds through node-gyp-build.
-      # The platform entry require()s the .node file with a string literal so
+      # `Bun.build({ compile })` will not find prebuilds through node-gyp-build.
+      # The platform entry statically imports the .node file with type:file so
       # Bun embeds it. A source build in build/Release is not that path.
       - name: Build a prebuild for the compile smoke test
         run: npm run prebuild
 
-      - name: Stage pdfium.dll next to the Windows prebuild
+      - name: Stage pdfium.dll for Windows compile
         if: runner.os == 'Windows'
-        run: node scripts/fetch-pdfium.mjs --target win32-x64
+        run: |
+          node scripts/fetch-pdfium.mjs --target win32-x64
+          node scripts/fetch-pdfium.mjs --target win32-arm64
 
+      # Compiled variants run from a temp directory so they cannot see
+      # this checkout's prebuilds/: with the platform import the native
+      # backend must load; without it loadNative() must fail.
       - name: Bun compile smoke test
-        run: bun test/smoke/bun-compile.mjs
+        run: bun test test/smoke/bun-compile.test.ts
 
   fallback:
     name: CUPS command line fallback
@@ -239,6 +277,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - run: npm ci --ignore-scripts
       - run: npm run build
       - run: bash scripts/setup-test-printer.sh PrintItNowTest >> "$GITHUB_ENV"
@@ -248,7 +289,7 @@ jobs:
       - name: End-to-end tests through lp
         env:
           PRINT_IT_NOW_BACKEND: lp
-        run: npm run test:e2e
+        run: bun test test/e2e
 
   package:
     name: Package contents
@@ -259,6 +300,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - run: npm ci --ignore-scripts
       - run: npm run build:ts
 
@@ -283,6 +327,7 @@ jobs:
             package/dist/index.cjs \
             package/dist/index.d.ts \
             package/dist/cli.js \
+            package/src/index.ts \
             package/src/platform/index.ts \
             package/src/platform/win.ts \
             package/src/platform/macos.ts \

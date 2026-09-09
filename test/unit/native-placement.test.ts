@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it } from "bun:test";
 
-import { loadNative } from "../../dist/internal.js";
+import { loadNative } from "../../src/internal.js";
 
 /**
  * Mapping a PDF page onto a sheet is the fiddliest part of the Windows path:
@@ -11,8 +11,6 @@ import { loadNative } from "../../dist/internal.js";
  * exports it for testing without a printer.
  */
 const native = loadNative();
-
-const SCALE = { actual: 0, fit: 1, shrink: 2, "noscale-clip": 3 };
 
 /**
  * US Letter at 300 dpi with a 1/6" unprintable margin all round:
@@ -44,7 +42,14 @@ const A4_SHEET = {
 const LETTER_PAGE = { width: 612, height: 792 };
 const LANDSCAPE_LETTER_PAGE = { width: 792, height: 612 };
 
-function place(page, sheet, scale, autoRotate = true) {
+const SCALE = { actual: 0, fit: 1, shrink: 2, "noscale-clip": 3 } as const;
+
+function place(
+  page: { width: number; height: number },
+  sheet: Record<string, number>,
+  scale: keyof typeof SCALE,
+  autoRotate = true,
+) {
   return native._computePlacement(page.width, page.height, sheet, SCALE[scale], autoRotate);
 }
 

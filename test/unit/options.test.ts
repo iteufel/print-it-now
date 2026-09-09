@@ -1,19 +1,19 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it } from "bun:test";
 
+import type { PrintOptions } from "../../src/types.js";
 import {
   buildNativeRequest,
   resolveOptions,
   toIppOptions,
   toWindowsSettings,
-} from "../../dist/internal.js";
+} from "../../src/internal.js";
 
-/** IPP attributes as a plain object, for readable assertions. */
-function ipp(options) {
+function ipp(options: PrintOptions = {}) {
   return Object.fromEntries(toIppOptions(resolveOptions(options)));
 }
 
-function windows(options) {
+function windows(options: PrintOptions = {}) {
   return toWindowsSettings(resolveOptions(options));
 }
 
@@ -81,7 +81,7 @@ describe("resolveOptions validation", () => {
     [{ windows: { printMode: "pcl" } }, "windows.printMode"],
   ]) {
     it(`rejects ${JSON.stringify(options)}`, () => {
-      assert.throws(() => resolveOptions(options), {
+      assert.throws(() => resolveOptions(options as PrintOptions), {
         code: "EINVALIDOPTION",
         option,
       });
