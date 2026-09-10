@@ -19,6 +19,9 @@
 #ifndef JOB_STATUS_RETAINED
 #define JOB_STATUS_RETAINED 0x00002000
 #endif
+#ifndef CCHBINNAME
+#define CCHBINNAME 24
+#endif
 
 namespace pin {
 namespace backend {
@@ -406,6 +409,13 @@ Status PrintPass(const pdfium::Library& pdfium,
   return Status::Ok();
 }
 
+std::string TrimBinName(const wchar_t* field) {
+  std::wstring raw(field, CCHBINNAME);
+  while (!raw.empty() && raw.back() == L'\0') raw.pop_back();
+  while (!raw.empty() && (raw.back() == L' ' || raw.back() == L'\t')) raw.pop_back();
+  return win::Narrow(raw);
+}
+
 }  // namespace
 
 Status Describe(BackendInfo* out) {
@@ -425,6 +435,70 @@ Status ListPrinters(std::vector<PrinterInfo>* out) { return EnumeratePrinters(ou
 
 Status DefaultPrinter(std::string* out) {
   *out = DefaultPrinterName();
+  return Status::Ok();
+}
+
+Status ListTrays(const std::string& printer, std::vector<TrayInfo>* out) {
+  out->clear();
+  const std::wstring wide = win::Widen(printer);
+
+  win::PrinterHandle handle;
+  PIN_RETURN_IF_ERROR(handle.Open(wide));
+
+  std::wstring port;
+  DWORD needed = 0;
+  GetPrinterW(handle.get(), 2, nullptr, 0, &needed);
+  if (needed > 0) {
+    std::vector<unsigned char> buffer(needed);
+    if (GetPrinterW(handle.get(), 2, buffer.data(), needed, &needed) != 0) {
+      const auto* info = reinterpret_cast<const PRINTER_INFO_2W*>(buffer.data());
+      if (info->pPortName != nullptr) port = info->pPortName;
+    }
+  }
+  const wchar_t* port_c = port.empty() ? L"" : port.c_str();
+
+  const int count = DeviceCapabilitiesW(wide.c_str(), port_c, DC_BINS, nullptr, nullptr);
+  if (count <= 0) return Status::Ok();
+
+  std::vector<WORD> bins(static_cast<size_t>(count));
+  if (DeviceCapabilitiesW(wide.c_str(), port_c, DC_BINS,
+                          reinterpret_cast<LPWSTR>(bins.data()), nullptr) <= 0) {
+    return Status::Ok();
+  }
+
+  std::vector<wchar_t> names(static_cast<size_t>(count) * CCHBINNAME);
+  const int name_count =
+      DeviceCapabilitiesW(wide.c_str(), port_c, DC_BINNAMES, names.data(), nullptr);
+
+  std::optional<int> default_bin;
+  win::DevMode devmode;
+  if (devmode.LoadDefaults(handle.get(), wide).ok()) {
+    const DEVMODEW* dm = devmode.get();
+    if (dm != nullptr && (dm->dmFields & DM_DEFAULTSOURCE) != 0) {
+      default_bin = static_cast<int>(dm->dmDefaultSource);
+    }
+  }
+
+  out->reserve(static_cast<size_t>(count));
+  for (int i = 0; i < count; ++i) {
+    const int id = static_cast<int>(bins[static_cast<size_t>(i)]);
+    bool seen = false;
+    for (const TrayInfo& existing : *out) {
+      if (existing.id.has_value() && *existing.id == id) {
+        seen = true;
+        break;
+      }
+    }
+    if (seen) continue;
+
+    TrayInfo tray;
+    tray.id = id;
+    if (i < name_count) {
+      tray.display_name = TrimBinName(names.data() + static_cast<size_t>(i) * CCHBINNAME);
+    }
+    tray.is_default = default_bin.has_value() && *default_bin == id;
+    out->push_back(std::move(tray));
+  }
   return Status::Ok();
 }
 

@@ -282,6 +282,25 @@ Napi::Value ToJs(Napi::Env env, const std::vector<JobInfo>& jobs) {
   return out;
 }
 
+Napi::Value ToJs(Napi::Env env, const TrayInfo& tray) {
+  Napi::Object out = Napi::Object::New(env);
+  if (!tray.name.empty()) {
+    out.Set("name", Napi::String::New(env, tray.name));
+  }
+  SetOptionalNumber(out, "id", tray.id);
+  SetIfNotEmpty(out, "displayName", tray.display_name);
+  out.Set("isDefault", Napi::Boolean::New(env, tray.is_default));
+  return out;
+}
+
+Napi::Value ToJs(Napi::Env env, const std::vector<TrayInfo>& trays) {
+  Napi::Array out = Napi::Array::New(env, trays.size());
+  for (size_t i = 0; i < trays.size(); ++i) {
+    out.Set(static_cast<uint32_t>(i), ToJs(env, trays[i]));
+  }
+  return out;
+}
+
 Napi::Value ToJs(Napi::Env env, const BackendInfo& info) {
   Napi::Object out = Napi::Object::New(env);
   out.Set("backend", Napi::String::New(env, info.backend));

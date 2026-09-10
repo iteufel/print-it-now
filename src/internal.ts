@@ -35,6 +35,7 @@ export {
   findPaperSize,
   knownPaperBinNames,
   knownPaperSizeNames,
+  paperBinName,
   toTenthsOfMm,
 } from "./paper.js";
 export * as lpFallback from "./fallback/lp.js";

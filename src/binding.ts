@@ -5,6 +5,18 @@ import { BackendUnavailableError } from "./errors.js";
 import type { BackendInfo, JobStatus, Printer } from "./types.js";
 import type { NativeRequest } from "./options.js";
 
+/**
+ * Raw tray record from the native addon. Windows fills `id` and leaves `name`
+ * unset; CUPS fills `name` and leaves `id` unset. {@link listTrays} maps the
+ * Windows ids onto the names {@link PrintOptions.tray} accepts.
+ */
+export interface NativeTray {
+  name?: string;
+  id?: number;
+  displayName?: string;
+  isDefault?: boolean;
+}
+
 /** Resolve relative to this module, independent of the application's cwd.
  * The CJS build substitutes a runtime __filename URL for import.meta.url.
  * Standalone executables use registration and never call this function.
@@ -31,6 +43,7 @@ export interface NativeAddon {
   describe(): Promise<BackendInfo>;
   listPrinters(): Promise<Printer[]>;
   defaultPrinter(): Promise<string | null>;
+  listTrays(printer: string): Promise<NativeTray[]>;
   print(request: NativeRequest): Promise<{
     jobId: number;
     printer: string;

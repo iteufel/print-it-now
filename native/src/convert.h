@@ -23,6 +23,8 @@ Napi::Value ToJs(Napi::Env env, const PrinterInfo& printer);
 Napi::Value ToJs(Napi::Env env, const std::vector<PrinterInfo>& printers);
 Napi::Value ToJs(Napi::Env env, const JobInfo& job);
 Napi::Value ToJs(Napi::Env env, const std::vector<JobInfo>& jobs);
+Napi::Value ToJs(Napi::Env env, const TrayInfo& tray);
+Napi::Value ToJs(Napi::Env env, const std::vector<TrayInfo>& trays);
 Napi::Value ToJs(Napi::Env env, const BackendInfo& info);
 
 // Builds the Error object the JS layer expects: a `code` discriminator plus the

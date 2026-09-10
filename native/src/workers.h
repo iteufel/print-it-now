@@ -67,6 +67,7 @@ Napi::Value StartDefaultPrinter(const Napi::CallbackInfo& info);
 Napi::Value StartPrint(const Napi::CallbackInfo& info);
 Napi::Value StartGetJob(const Napi::CallbackInfo& info);
 Napi::Value StartListJobs(const Napi::CallbackInfo& info);
+Napi::Value StartListTrays(const Napi::CallbackInfo& info);
 Napi::Value StartCancelJob(const Napi::CallbackInfo& info);
 
 }  // namespace pin

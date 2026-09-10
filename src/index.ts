@@ -20,16 +20,19 @@ import {
   resolveBitmapOptions,
   resolveOptions,
 } from "./options.js";
+import { paperBinName } from "./paper.js";
 import type {
   BackendInfo,
   BitmapPrintOptions,
   BitmapSource,
   JobStatus,
   PdfSource,
+  PaperTray,
   Printer,
   PrintJob,
   PrintOptions,
 } from "./types.js";
+import type { NativeTray } from "./binding.js";
 
 export * from "./types.js";
 export {
@@ -66,6 +69,50 @@ export async function listPrinters(): Promise<Printer[]> {
     return backend.native ? await backend.native.listPrinters() : await lp.listPrinters();
   } catch (error) {
     throw fromNativeError(error, {});
+  }
+}
+
+/**
+ * Maps a native tray record onto {@link PaperTray}.
+ *
+ * Windows reports a numeric `DMBIN_*` id; the names {@link PrintOptions.tray}
+ * accepts live in src/paper.ts so this mapping can be unit tested without a
+ * printer attached. A driver-specific id (typically ≥ 256) is left as a
+ * number, which print() already accepts.
+ */
+function toPaperTray(raw: NativeTray): PaperTray | null {
+  let name: string | number;
+  if (raw.id !== undefined) {
+    name = paperBinName(raw.id) ?? raw.id;
+  } else if (raw.name !== undefined && raw.name !== "") {
+    name = raw.name;
+  } else {
+    return null;
+  }
+
+  return {
+    name,
+    ...(raw.displayName !== undefined && raw.displayName !== ""
+      ? { displayName: raw.displayName }
+      : {}),
+    isDefault: raw.isDefault === true,
+  };
+}
+
+/** Input trays (Windows: bins) the printer can draw paper from. */
+export async function listTrays(printer: string): Promise<PaperTray[]> {
+  if (typeof printer !== "string" || printer.trim() === "") {
+    throw new InvalidOptionError("printer", "expected a printer name");
+  }
+
+  const backend = await getBackend();
+  try {
+    if (!backend.native) return await lp.listTrays(printer);
+    return (await backend.native.listTrays(printer))
+      .map(toPaperTray)
+      .filter((tray): tray is PaperTray => tray !== null);
+  } catch (error) {
+    throw fromNativeError(error, { printer });
   }
 }
 

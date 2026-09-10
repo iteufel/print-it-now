@@ -97,6 +97,21 @@ class ListJobsWorker final : public BackendWorker<std::vector<JobInfo>> {
   std::string printer_;
 };
 
+class ListTraysWorker final : public BackendWorker<std::vector<TrayInfo>> {
+ public:
+  ListTraysWorker(Napi::Env env, std::string printer)
+      : BackendWorker(env), printer_(std::move(printer)) {}
+
+ protected:
+  Status Run(std::vector<TrayInfo>* out) override { return backend::ListTrays(printer_, out); }
+  Napi::Value Convert(Napi::Env env, const std::vector<TrayInfo>& result) override {
+    return ToJs(env, result);
+  }
+
+ private:
+  std::string printer_;
+};
+
 class CancelJobWorker final : public BackendWorker<Empty> {
  public:
   CancelJobWorker(Napi::Env env, std::string printer, int job_id)
@@ -195,6 +210,14 @@ Napi::Value StartListJobs(const Napi::CallbackInfo& info) {
   Status status = ReadPrinter(info, &printer);
   if (!status.ok()) return RejectWith(env, status);
   return Queue<ListJobsWorker>(env, std::move(printer));
+}
+
+Napi::Value StartListTrays(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::string printer;
+  Status status = ReadPrinter(info, &printer);
+  if (!status.ok()) return RejectWith(env, status);
+  return Queue<ListTraysWorker>(env, std::move(printer));
 }
 
 Napi::Value StartCancelJob(const Napi::CallbackInfo& info) {

@@ -131,6 +131,15 @@ struct JobInfo {
   std::string raw_state;
 };
 
+struct TrayInfo {
+  // CUPS media-source / InputSlot keyword. Empty on Windows, where `id` is used.
+  std::string name;
+  // Windows DMBIN_* (or driver-specific) id. Empty on CUPS.
+  std::optional<int> id;
+  std::string display_name;
+  bool is_default = false;
+};
+
 struct BackendInfo {
   std::string backend;
   std::string pdfium_version;
@@ -147,6 +156,9 @@ Status ListPrinters(std::vector<PrinterInfo>* out);
 // Leaves *out empty when the system has no default printer, which is not an
 // error at this layer.
 Status DefaultPrinter(std::string* out);
+// Leaves *out empty when the printer has no selectable trays, which is not an
+// error: virtual "Print to PDF" queues and raw file: destinations have none.
+Status ListTrays(const std::string& printer, std::vector<TrayInfo>* out);
 Status Print(const PrintRequest& request, PrintResult* out);
 // Sets *found to false when the queue has no such job.
 //

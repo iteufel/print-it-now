@@ -137,7 +137,7 @@ export interface PrintOptions {
   /**
    * Input tray. On Windows this is either a `DMBIN_*` name (`"auto"`, `"upper"`,
    * `"manual"`, …) or a numeric driver-specific bin id; on CUPS it becomes
-   * `media-source`.
+   * `media-source`. {@link listTrays} reports the values a given printer accepts.
    */
   tray?: string | number;
   color?: ColorMode;
@@ -244,6 +244,26 @@ export interface Printer {
   uri?: string;
   /** Whether the queue currently accepts new jobs. */
   acceptingJobs?: boolean;
+}
+
+/**
+ * An input tray (Windows: bin) that {@link listTrays} reported for a queue.
+ *
+ * `name` is the value to pass as {@link PrintOptions.tray}.
+ */
+export interface PaperTray {
+  /**
+   * Value to pass as {@link PrintOptions.tray}.
+   *
+   * On Windows this is a `DMBIN_*` name (`"auto"`, `"upper"`, `"manual"`, …)
+   * when the bin is one of the standard ones, or the numeric driver-specific bin
+   * id otherwise. On CUPS it is the `media-source` keyword, falling back to a
+   * PPD `InputSlot` choice when the queue has no IPP media source.
+   */
+  name: string | number;
+  /** Human-readable label from the driver, when available. */
+  displayName?: string;
+  isDefault: boolean;
 }
 
 /** Which native backend is compiled into the loaded addon. */

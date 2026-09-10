@@ -143,13 +143,17 @@ not the same as once it has reached paper. Poll `getJob` for that.
 ### Finding printers
 
 ```js
-import { getDefaultPrinter, listPrinters } from "print-it-now";
+import { getDefaultPrinter, listPrinters, listTrays } from "print-it-now";
 
 for (const printer of await listPrinters()) {
   console.log(printer.name, printer.state, printer.isDefault ? "(default)" : "");
 }
 
 const fallback = await getDefaultPrinter(); // null when none is configured
+
+for (const tray of await listTrays("Office Laser")) {
+  console.log(tray.name, tray.displayName ?? "", tray.isDefault ? "(default)" : "");
+}
 ```
 
 ### Following and cancelling a job
@@ -174,6 +178,7 @@ await cancelJob(job.printer, job.jobId);
 ```sh
 npx print-it-now report.pdf --printer "Office Laser" --pages 1-4 --duplex long-edge
 npx print-it-now printers
+npx print-it-now trays "Office Laser"
 npx print-it-now backend
 cat report.pdf | npx print-it-now - --printer "Office Laser"
 ```
@@ -286,6 +291,17 @@ so one pixel is one PostScript point).
 ### `listPrinters(): Promise<Printer[]>`
 
 ### `getDefaultPrinter(): Promise<Printer | null>`
+
+### `listTrays(printer): Promise<PaperTray[]>`
+
+Input trays the printer can draw paper from. `name` is the value to pass as
+`tray` when printing. An empty array means the queue has no selectable trays — a
+virtual "Print to PDF" printer, or a raw `file:` queue.
+
+On Windows, standard bins come back as `DMBIN_*` names (`"auto"`, `"upper"`,
+`"manual"`, …) and driver-specific bins as numeric ids. On CUPS the names are
+`media-source` keywords, or PPD `InputSlot` choices when the queue has no IPP
+media source.
 
 ### `getJob(printer, jobId): Promise<JobStatus | null>`
 
@@ -434,7 +450,7 @@ The fallback exists so a slim container that installed `cups-client` but not
 `libcups2` still prints. It is not equivalent: it spawns a process per job, cannot
 report job status, and reports printer state as `unknown`, because the command
 line tools only give it as localised prose. Install the CUPS library for the full
-feature set.
+feature set. Tray listing still works: it parses `lpoptions -l`.
 
 Set `PRINT_IT_NOW_BACKEND=lp` to force the fallback, which is how CI keeps it from
 rotting.

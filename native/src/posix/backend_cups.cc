@@ -127,6 +127,40 @@ class DestHandle {
   cups::Dest* dest_;
 };
 
+// Releases cups_dinfo_t from cupsCopyDestInfo.
+class DestInfoHandle {
+ public:
+  DestInfoHandle(const cups::Library& cups, cups::DestInfo* info) : cups_(cups), info_(info) {}
+
+  DestInfoHandle(const DestInfoHandle&) = delete;
+  DestInfoHandle& operator=(const DestInfoHandle&) = delete;
+
+  ~DestInfoHandle() {
+    if (info_ != nullptr) cups_.FreeDestInfo(info_);
+  }
+
+  cups::DestInfo* get() const { return info_; }
+
+ private:
+  const cups::Library& cups_;
+  cups::DestInfo* info_;
+};
+
+bool EqualsIgnoreCase(const char* left, const std::string& right) {
+  if (left == nullptr) return false;
+  if (std::strlen(left) != right.size()) return false;
+  for (size_t i = 0; i < right.size(); ++i) {
+    auto lower = [](unsigned char c) {
+      return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
+    };
+    if (lower(static_cast<unsigned char>(left[i])) !=
+        lower(static_cast<unsigned char>(right[i]))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 Status WriteAll(const cups::Library& cups, const char* bytes, size_t length) {
   size_t offset = 0;
   while (offset < length) {
@@ -256,6 +290,64 @@ Status DefaultPrinter(std::string* out) {
     return Status::Ok();
   }
   *out = QualifiedName(*dest.get());
+  return Status::Ok();
+}
+
+Status ListTrays(const std::string& printer, std::vector<TrayInfo>* out) {
+  out->clear();
+  Status status;
+  const cups::Library* cups = cups::Load(&status);
+  if (cups == nullptr) return status;
+
+  std::string name;
+  std::string instance;
+  SplitDestination(printer, &name, &instance);
+
+  DestHandle dest(*cups, cups->GetNamedDest(nullptr, name.c_str(),
+                                            instance.empty() ? nullptr : instance.c_str()));
+  if (dest.get() == nullptr) {
+    return Status::Error(code::kPrinterNotFound,
+                         "Printer \"" + printer + "\" was not found");
+  }
+
+  DestInfoHandle info(*cups, cups->CopyDestInfo(nullptr, dest.get()));
+  if (info.get() == nullptr) {
+    // The queue exists but its capabilities could not be queried (offline IPP
+    // printer, raw file: queue). An empty list is the honest answer.
+    return Status::Ok();
+  }
+
+  const char* option = "media-source";
+  cups::IppAttribute* supported =
+      cups->FindDestSupported(nullptr, dest.get(), info.get(), option);
+  if (supported == nullptr || cups->IppGetCount(supported) <= 0) {
+    option = "InputSlot";
+    supported = cups->FindDestSupported(nullptr, dest.get(), info.get(), option);
+  }
+  if (supported == nullptr || cups->IppGetCount(supported) <= 0) return Status::Ok();
+
+  const char* current =
+      cups->GetOption("media-source", dest.get()->num_options, dest.get()->options);
+  if (current == nullptr) {
+    current = cups->GetOption("InputSlot", dest.get()->num_options, dest.get()->options);
+  }
+
+  const int count = cups->IppGetCount(supported);
+  out->reserve(static_cast<size_t>(count));
+  for (int i = 0; i < count; ++i) {
+    const char* value = cups->IppGetString(supported, i, nullptr);
+    if (value == nullptr || value[0] == '\0') continue;
+
+    TrayInfo tray;
+    tray.name = value;
+    const char* localized =
+        cups->LocalizeDestValue(nullptr, dest.get(), info.get(), option, value);
+    if (localized != nullptr && localized[0] != '\0' && tray.name != localized) {
+      tray.display_name = localized;
+    }
+    tray.is_default = EqualsIgnoreCase(current, tray.name);
+    out->push_back(std::move(tray));
+  }
   return Status::Ok();
 }
 

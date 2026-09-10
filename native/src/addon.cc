@@ -115,6 +115,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("describe", Napi::Function::New(env, pin::StartDescribe));
   exports.Set("listPrinters", Napi::Function::New(env, pin::StartListPrinters));
   exports.Set("defaultPrinter", Napi::Function::New(env, pin::StartDefaultPrinter));
+  exports.Set("listTrays", Napi::Function::New(env, pin::StartListTrays));
   exports.Set("print", Napi::Function::New(env, pin::StartPrint));
   exports.Set("getJob", Napi::Function::New(env, pin::StartGetJob));
   exports.Set("listJobs", Napi::Function::New(env, pin::StartListJobs));

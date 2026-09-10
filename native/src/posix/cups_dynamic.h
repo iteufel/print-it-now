@@ -17,6 +17,8 @@
 // architecture and a working install is `node-gyp rebuild`.
 //
 // The types and constants used here have been ABI-stable since CUPS 1.2 (2006).
+// Destination capability queries (cupsCopyDestInfo, cupsFindDestSupported)
+// need CUPS 1.6 / 1.7, which every libcups.so.2 still in circulation provides.
 // libcups3 changed both the soname and the API; we deliberately load
 // libcups.so.2 / libcups.2.dylib by exact soname so that a CUPS 3 installation
 // can never be mistaken for one we know how to talk to.
@@ -54,6 +56,10 @@ struct Job {
   std::time_t processing_time;
 };
 
+// Opaque; only ever handled as a pointer.
+struct DestInfo;
+struct IppAttribute;
+
 inline constexpr const char* kFormatPdf = "application/pdf";
 inline constexpr const char* kFormatBmp = "image/bmp";
 
@@ -90,6 +96,16 @@ struct Library {
   const char* (*GetOption)(const char* name, int num_options, Option* options);
   int (*AddOption)(const char* name, const char* value, int num_options, Option** options);
   void (*FreeOptions)(int num_options, Option* options);
+  DestInfo* (*CopyDestInfo)(Http* http, Dest* dest);
+  void (*FreeDestInfo)(DestInfo* dinfo);
+  IppAttribute* (*FindDestSupported)(Http* http, Dest* dest, DestInfo* dinfo, const char* option);
+  const char* (*LocalizeDestValue)(Http* http,
+                                   Dest* dest,
+                                   DestInfo* dinfo,
+                                   const char* option,
+                                   const char* value);
+  int (*IppGetCount)(IppAttribute* attr);
+  const char* (*IppGetString)(IppAttribute* attr, int element, const char** language);
   int (*CreateJob)(Http* http,
                    const char* name,
                    const char* title,

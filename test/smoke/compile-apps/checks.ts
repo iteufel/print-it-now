@@ -11,6 +11,7 @@ import {
   getBackendInfo,
   knownPaperSizeNames,
   listPrinters,
+  listTrays,
   parsePageRanges,
   printPdf,
   PrintError,
@@ -45,6 +46,14 @@ export async function runStandaloneChecks(): Promise<void> {
     throw new Error("listPrinters() did not return an array");
   }
   process.stdout.write(`  ok    ${printers.length} printer(s)\n`);
+
+  if (printers.length > 0) {
+    const trays = await listTrays(printers[0]!.name);
+    if (!Array.isArray(trays)) {
+      throw new Error("listTrays() did not return an array");
+    }
+    process.stdout.write(`  ok    ${trays.length} tray(s) on ${printers[0]!.name}\n`);
+  }
 
   if (process.platform === "win32" && printers.length > 0) {
     try {

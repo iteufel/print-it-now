@@ -11,6 +11,7 @@ import {
   getJob,
   listJobs,
   listPrinters,
+  listTrays,
   printPdf,
   type PdfSource,
   type PrintOptions,
@@ -212,6 +213,22 @@ describe.skipIf(Boolean(skip))("end-to-end printing", () => {
       printers.some((entry) => entry.name === queue),
       `expected "${queue}" among ${printers.map((p) => p.name).join(", ")}`,
     );
+  });
+
+  it("lists trays as an array", async () => {
+    const trays = await listTrays(queue);
+    assert.ok(Array.isArray(trays));
+    for (const tray of trays) {
+      assert.ok(
+        typeof tray.name === "string" || typeof tray.name === "number",
+        `tray name should be a string or number, got ${typeof tray.name}`,
+      );
+      assert.equal(typeof tray.isDefault, "boolean");
+    }
+  });
+
+  it("rejects listing trays on a queue that does not exist", async () => {
+    await assert.rejects(listTrays("print-it-now-no-such-queue"), { code: "EPRINTERNOTFOUND" });
   });
 
   it("prints a PDF passed as bytes", async () => {

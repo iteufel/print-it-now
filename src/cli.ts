@@ -8,6 +8,7 @@ import {
   getJob,
   listJobs,
   listPrinters,
+  listTrays,
   printPdf,
 } from "./index.js";
 import type { PrintOptions } from "./types.js";
@@ -17,6 +18,7 @@ const USAGE = `print-it-now - headless PDF printing
 Usage:
   print-it-now <file.pdf> [options]     print a PDF (use - to read stdin)
   print-it-now printers                 list available printers
+  print-it-now trays <printer>          list input trays for a printer
   print-it-now backend                  show which backend is in use
   print-it-now jobs <printer>           list jobs in a printer's queue
   print-it-now job <printer> <id>       show the state of a job
@@ -172,7 +174,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   if (Object.keys(windows).length > 0) options.windows = windows;
 
   const [first = "", ...rest] = positional;
-  const commands = new Set(["printers", "backend", "jobs", "job", "cancel"]);
+  const commands = new Set(["printers", "trays", "backend", "jobs", "job", "cancel"]);
   return commands.has(first)
     ? { command: first, positional: rest, options, json }
     : { command: "print", positional, options, json };
@@ -203,6 +205,25 @@ async function main(): Promise<number> {
                 .filter(Boolean)
                 .join(", ");
               return `${printer.name}  [${marks}]${printer.driver ? `  ${printer.driver}` : ""}`;
+            })
+            .join("\n") + "\n"
+        );
+      });
+      return 0;
+    }
+
+    case "trays": {
+      const [printer] = positional;
+      if (printer === undefined) throw new UsageError("trays needs a printer name");
+      const trays = await listTrays(printer);
+      emit(json, trays, () => {
+        if (trays.length === 0) return `No input trays reported for "${printer}".\n`;
+        return (
+          trays
+            .map((tray) => {
+              const label = tray.displayName ? `  ${tray.displayName}` : "";
+              const mark = tray.isDefault ? "  [default]" : "";
+              return `${tray.name}${label}${mark}`;
             })
             .join("\n") + "\n"
         );

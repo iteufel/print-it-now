@@ -144,6 +144,18 @@ export function knownPaperBinNames(): string[] {
 }
 
 /**
+ * Canonical `DMBIN_*` name for a numeric bin id, when it is one of the
+ * standard ones. `1` is `"upper"` rather than `"onlyone"`: both spellings are
+ * accepted on input, but listing has to pick one.
+ */
+export function paperBinName(id: number): string | undefined {
+  for (const [name, value] of Object.entries(PAPER_BINS)) {
+    if (value === id) return name;
+  }
+  return undefined;
+}
+
+/**
  * CUPS media name for an explicit size. `Custom.WIDTHxHEIGHTmm` is the legacy
  * spelling, which CUPS normalises into a PWG custom name; it is understood by
  * both PPD-based and driverless queues, whereas the PWG `custom_…` form is not

@@ -5,7 +5,7 @@ import {
   JobNotFoundError,
   PrinterNotFoundError,
 } from "../errors.js";
-import type { Printer } from "../types.js";
+import type { PaperTray, Printer } from "../types.js";
 import type { NativeRequest } from "../options.js";
 
 /**
@@ -109,6 +109,73 @@ export async function listPrinters(): Promise<Printer[]> {
     // unknown rather than guessed at.
     state: "unknown" as const,
   }));
+}
+
+/**
+ * Parses `lpoptions -l` output into trays.
+ *
+ * CUPS prints one `option/text: choice …` line per option, with `*` marking the
+ * current value. Driverless queues expose `media-source`; PPD queues expose
+ * `InputSlot`. The former is preferred because that is what the print path
+ * sends as `tray`.
+ *
+ * Exported for the unit tests: the prose is the contract with `lpoptions`.
+ */
+export function parseLpoptionsTrays(output: string): PaperTray[] {
+  let mediaSource: PaperTray[] | undefined;
+  let inputSlot: PaperTray[] | undefined;
+
+  for (const line of output.split("\n")) {
+    const colon = line.indexOf(":");
+    if (colon === -1) continue;
+    const head = line.slice(0, colon).trim();
+    const values = line.slice(colon + 1).trim();
+    if (values === "") continue;
+
+    const option = head.split("/")[0];
+    let bucket: "media-source" | "InputSlot" | undefined;
+    if (option === "media-source") bucket = "media-source";
+    else if (option === "InputSlot") bucket = "InputSlot";
+    else continue;
+
+    const trays: PaperTray[] = [];
+    for (const token of values.split(/\s+/)) {
+      if (token === "") continue;
+      const isDefault = token.startsWith("*");
+      const name = isDefault ? token.slice(1) : token;
+      if (name === "") continue;
+      trays.push({ name, isDefault });
+    }
+
+    if (bucket === "media-source") mediaSource = trays;
+    else inputSlot = trays;
+  }
+
+  return mediaSource ?? inputSlot ?? [];
+}
+
+export async function listTrays(printer: string): Promise<PaperTray[]> {
+  const result = await run("lpoptions", ["-p", printer, "-l"]);
+  const trays = parseLpoptionsTrays(result.stdout);
+  if (trays.length > 0) return trays;
+
+  const message = `${result.stderr}\n${result.stdout}`.trim();
+  // macOS `lpoptions` exits 0 for an unknown queue and only complains that the
+  // PPD is missing — the same wording a real raw `file:` queue produces. The
+  // destination list is what distinguishes the two.
+  const ppdUnavailable = /unable to (?:get|open) PPD|no ppd|no such file or directory/i.test(
+    message,
+  );
+  if (ppdUnavailable) {
+    const printers = await listPrinters();
+    if (printers.some((entry) => entry.name === printer)) return [];
+    throw new PrinterNotFoundError(printer);
+  }
+  if (/unknown destination|unknown printer|does not exist|not found/i.test(message)) {
+    throw new PrinterNotFoundError(printer);
+  }
+  if (result.code === 0) return [];
+  throw new BackendError(`lpoptions failed: ${message || `exit code ${result.code}`}`);
 }
 
 export async function getDefaultPrinter(): Promise<string | null> {
