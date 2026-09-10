@@ -40,8 +40,10 @@ class DevMode {
   // Fetches the driver's current defaults for `printer`.
   Status LoadDefaults(HANDLE printer_handle, const std::wstring& printer);
 
-  // Applies the caller's overrides and lets the driver normalise the result,
-  // which is what resolves conflicts such as duplex on a simplex-only device.
+  // Applies the caller's overrides and lets the driver normalise the result.
+  // The merge is done into a copy of the loaded DEVMODE, not a zeroed buffer:
+  // a zeroed output drops dmSize/dmDriverExtra and a number of drivers then
+  // ignore the input, which is what made duplex requests print single-sided.
   Status Apply(HANDLE printer_handle,
                const std::wstring& printer,
                const WindowsSettings& settings,

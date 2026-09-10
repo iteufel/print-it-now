@@ -40,6 +40,18 @@ class DeviceContext {
     dc_ = dc;
   }
 
+  // Pushes the job DEVMODE onto an already-created DC. CreateDC alone is not
+  // enough for duplex: System.Drawing's StandardPrintController -- which is
+  // what PdfiumViewer prints through -- calls ResetDC before every StartPage,
+  // and without that HP, Brother, Xerox and v4 XPS class drivers commonly
+  // ignore dmDuplex and the job comes out single-sided.
+  void PushDevMode(const DEVMODEW* devmode) {
+    if (dc_ == nullptr || devmode == nullptr) return;
+    if (HDC updated = ResetDCW(dc_, devmode)) {
+      dc_ = updated;
+    }
+  }
+
   HDC get() const { return dc_; }
 
  private:
@@ -52,13 +64,15 @@ class DeviceContext {
 // multi-page job should do.
 class DocumentScope {
  public:
-  DocumentScope(HDC dc) : dc_(dc) {}
+  explicit DocumentScope(DeviceContext& dc) : dc_(dc) {}
   ~DocumentScope() {
     if (!open_) return;
+    HDC hdc = dc_.get();
+    if (hdc == nullptr) return;
     if (committed_) {
-      EndDoc(dc_);
+      EndDoc(hdc);
     } else {
-      AbortDoc(dc_);
+      AbortDoc(hdc);
     }
   }
 
@@ -69,7 +83,7 @@ class DocumentScope {
   void Commit() { committed_ = true; }
 
  private:
-  HDC dc_;
+  DeviceContext& dc_;
   bool open_ = false;
   bool committed_ = false;
 };
@@ -336,10 +350,25 @@ Status ReadJobInfo(HANDLE handle,
   return Status::Ok();
 }
 
+Status BeginPage(DeviceContext& dc, const DEVMODEW* devmode) {
+  dc.PushDevMode(devmode);
+  if (StartPage(dc.get()) <= 0) {
+    const DWORD error = GetLastError();
+    return Status::Error(code::kBackend,
+                        "The driver refused to start a page: " + win::FormatLastError(error),
+                        static_cast<int>(error), win::FormatLastError(error));
+  }
+  // MM_TEXT makes one logical unit one device pixel, which is the space the
+  // placement calculation works in.
+  SetMapMode(dc.get(), MM_TEXT);
+  return Status::Ok();
+}
+
 // Emits one pass of the selected pages onto an already-started document.
 Status PrintPass(const pdfium::Library& pdfium,
                  const PrintRequest& request,
-                 HDC dc,
+                 DeviceContext& dc,
+                 const DEVMODEW* devmode,
                  const SheetMetrics& sheet,
                  FPDF_DOCUMENT document,
                  const std::vector<int>& pages,
@@ -357,24 +386,16 @@ Status PrintPass(const pdfium::Library& pdfium,
         ComputePlacement(width_pt, height_pt, sheet, request.scale, /*auto_rotate=*/true);
 
     for (int repeat = 0; repeat < repeats_per_page; ++repeat) {
-      if (StartPage(dc) <= 0) {
-        const DWORD error = GetLastError();
-        return Status::Error(code::kBackend,
-                            "The driver refused to start a page: " + win::FormatLastError(error),
-                            static_cast<int>(error), win::FormatLastError(error));
-      }
-      // MM_TEXT makes one logical unit one device pixel, which is the space the
-      // placement calculation works in.
-      SetMapMode(dc, MM_TEXT);
+      PIN_RETURN_IF_ERROR(BeginPage(dc, devmode));
 
-      const Status status = win::RenderPage(pdfium, dc, page.get(), placement, sheet,
+      const Status status = win::RenderPage(pdfium, dc.get(), page.get(), placement, sheet,
                                            request.windows.render_mode, request.windows.dpi);
       if (!status.ok()) {
-        EndPage(dc);
+        EndPage(dc.get());
         return status;
       }
 
-      if (EndPage(dc) <= 0) {
+      if (EndPage(dc.get()) <= 0) {
         const DWORD error = GetLastError();
         return Status::Error(code::kBackend,
                             "The driver refused to finish a page: " + win::FormatLastError(error),
@@ -452,6 +473,9 @@ Status PrintBitmap(const PrintRequest& request, PrintResult* out) {
                             "\": " + win::FormatLastError(error),
                         static_cast<int>(error), win::FormatLastError(error));
   }
+  // Push before reading sheet metrics so a driver that only honours the
+  // DEVMODE after ResetDC reports the paper the job will actually use.
+  dc.PushDevMode(devmode.get());
 
   const SheetMetrics sheet = win::ReadSheetMetrics(dc.get());
   const int dpi = request.windows.dpi > 0 ? request.windows.dpi : 72;
@@ -474,7 +498,7 @@ Status PrintBitmap(const PrintRequest& request, PrintResult* out) {
   doc_info.lpszDocName = job_name.empty() ? L"print-it-now" : job_name.c_str();
   doc_info.lpszOutput = output_file.empty() ? nullptr : output_file.c_str();
 
-  DocumentScope document_scope(dc.get());
+  DocumentScope document_scope(dc);
   const int job_id = StartDocW(dc.get(), &doc_info);
   if (job_id <= 0) {
     const DWORD error = GetLastError();
@@ -493,14 +517,7 @@ Status PrintBitmap(const PrintRequest& request, PrintResult* out) {
 
   for (int pass = 0; pass < document_passes; ++pass) {
     for (int repeat = 0; repeat < repeats_per_page; ++repeat) {
-      if (StartPage(dc.get()) <= 0) {
-        const DWORD error = GetLastError();
-        return Status::Error(code::kBackend,
-                            "The driver refused to start a page: " +
-                                win::FormatLastError(error),
-                            static_cast<int>(error), win::FormatLastError(error));
-      }
-      SetMapMode(dc.get(), MM_TEXT);
+      PIN_RETURN_IF_ERROR(BeginPage(dc, devmode.get()));
 
       const Status status = win::RenderRawBitmap(dc.get(), placement, request.pixel_format,
                                                  request.bitmap_width, request.bitmap_height,
@@ -575,6 +592,7 @@ Status PrintPdf(const PrintRequest& request, PrintResult* out) {
                             "\": " + win::FormatLastError(error),
                         static_cast<int>(error), win::FormatLastError(error));
   }
+  dc.PushDevMode(devmode.get());
 
   const SheetMetrics sheet = win::ReadSheetMetrics(dc.get());
 
@@ -592,7 +610,7 @@ Status PrintPdf(const PrintRequest& request, PrintResult* out) {
   // unless it is told where to write, which would hang a headless process.
   doc_info.lpszOutput = output_file.empty() ? nullptr : output_file.c_str();
 
-  DocumentScope document_scope(dc.get());
+  DocumentScope document_scope(dc);
   const int job_id = StartDocW(dc.get(), &doc_info);
   if (job_id <= 0) {
     const DWORD error = GetLastError();
@@ -610,8 +628,8 @@ Status PrintPdf(const PrintRequest& request, PrintResult* out) {
   document_scope.MarkOpen();
 
   for (int pass = 0; pass < document_passes; ++pass) {
-    PIN_RETURN_IF_ERROR(PrintPass(*pdfium, request, dc.get(), sheet, document.get(), pages,
-                                  repeats_per_page));
+    PIN_RETURN_IF_ERROR(PrintPass(*pdfium, request, dc, devmode.get(), sheet, document.get(),
+                                  pages, repeats_per_page));
   }
 
   document_scope.Commit();

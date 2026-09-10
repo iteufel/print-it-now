@@ -302,6 +302,22 @@ describe.skipIf(Boolean(skip))("end-to-end printing", () => {
     }
   });
 
+  it("accepts a duplex request without failing the job", async () => {
+    // File-backed queues cannot physically duplex, but the option must still
+    // survive DocumentProperties/ResetDC and produce the same pages. A driver
+    // that used to drop dmDuplex by merging into a zeroed DEVMODE would also
+    // reject the job here once that merge started failing closed.
+    const { job, bytes } = await printAndCollect(makePdf({ pages: 2 }), {
+      jobName: "e2e-duplex",
+      duplex: "long-edge",
+    });
+    assert.ok(job.jobId > 0);
+    if (canInspectOutput) {
+      assert.ok(bytes, "the queue should have produced output");
+      assert.equal(countPdfPages(bytes), 2);
+    }
+  });
+
   it.skipIf(Boolean(needsJobStatus))("reads back the state of a submitted job", async () => {
     const job = await printPdf(makePdf({ pages: 1 }), {
       printer: queue,

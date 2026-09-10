@@ -344,6 +344,19 @@ describe("buildNativeRequest", () => {
     assert.equal(win.kind, 0);
   });
 
+  it("forwards duplex onto the DEVMODE fields the Windows backend applies", () => {
+    // The native side never sees the "long-edge" string; if this mapping is
+    // dropped, Windows prints simplex because dmDuplex is left unset.
+    const request = buildNativeRequest(
+      resolveOptions({ duplex: "long-edge" }),
+      "Q",
+      "T",
+      source,
+      "windows",
+    );
+    assert.equal(request.windows.duplex, 2);
+  });
+
   it("does not report an option as unsupported when the active backend supports it", () => {
     // numberUp is unsupported on Windows and supported on CUPS. Building a CUPS
     // request must not run the Windows mapping, or a perfectly valid Linux job
